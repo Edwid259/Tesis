@@ -59,6 +59,7 @@ export async function GET(req: NextRequest) {
         command_type: command.command_type,
         speed_percent: Number(command.speed_percent),
         pwm_us: command.pwm_us,
+        payload: command.payload || {},
         created_at: command.created_at
       }
     });

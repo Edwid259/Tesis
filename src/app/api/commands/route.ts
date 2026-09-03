@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { device_id, command_type, speed_percent = 0, requested_by = 'Operador Web' } = body;
+    const { device_id, command_type, speed_percent = 0, payload = {}, requested_by = 'Operador Web' } = body;
 
     if (!command_type) {
       return NextResponse.json({ error: 'command_type es requerido' }, { status: 400 });
@@ -36,6 +36,7 @@ export async function POST(req: NextRequest) {
           command_type,
           speed_percent: speed,
           pwm_us,
+          payload,
           status: 'pending',
           created_at: new Date().toISOString()
         }
@@ -66,6 +67,7 @@ export async function POST(req: NextRequest) {
         command_type,
         speed_percent: speed,
         pwm_us,
+        payload,
         status: 'pending',
         requested_by
       })

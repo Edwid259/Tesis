@@ -98,9 +98,10 @@ CREATE TABLE IF NOT EXISTS public.alerts (
 CREATE TABLE IF NOT EXISTS public.control_commands (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     device_id UUID NOT NULL REFERENCES public.devices(id) ON DELETE CASCADE,
-    command_type VARCHAR(50) NOT NULL CHECK (command_type IN ('start', 'stop', 'set_speed', 'emergency_stop', 'reboot')),
+    command_type VARCHAR(50) NOT NULL CHECK (command_type IN ('start', 'stop', 'set_speed', 'emergency_stop', 'reboot', 'set_mode', 'set_config')),
     speed_percent NUMERIC(5,2) DEFAULT 0.00,
     pwm_us INTEGER DEFAULT 1500,
+    payload JSONB DEFAULT '{}'::jsonb,
     status VARCHAR(30) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'acknowledged', 'failed', 'expired')),
     requested_by VARCHAR(100) DEFAULT 'dashboard_user',
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -135,21 +136,25 @@ INSERT INTO public.system_settings (key, value, description)
 VALUES 
     ('do_thresholds', '{"critical": 4.0, "warning": 6.0, "optimal": 7.5, "unit": "mg/L"}'::jsonb, 'Umbrales de calidad para Oxígeno Disuelto'),
     ('sensor_scale_factors', '{"do_divider": 1000.0, "temp_divider": 100.0, "sat_divider": 10.0, "battery_divider": 1000.0}'::jsonb, 'Factores de normalización de datos crudos ESP32'),
-    ('thruster_pwm_calibration', '{"min_pwm": 1100, "neutral_pwm": 1500, "max_pwm": 1900}'::jsonb, 'Calibración de microsegundos PWM para Blue Robotics T200 (ESC Basic / ESC500)')
+    ('thruster_pwm_calibration', '{"min_pwm": 1100, "neutral_pwm": 1500, "max_pwm": 1900}'::jsonb, 'Calibración de microsegundos PWM para Blue Robotics T200 (ESC Basic / ESC500)'),
+    ('aeration_control_config', '{"control_mode": "pid", "target_do_mg_l": 7.5, "pid_gains": {"kp": 100.0, "ki": 1.5, "kd": 10.0}, "fuzzy_profile": "standard_pond", "min_rpm": 0, "max_rpm": 3200, "failsafe_rpm": 500, "manual_throttle_pct": 0.0, "sampling_interval_ms": 2000, "telemetry_interval_ms": 5000, "config_version": 1}'::jsonb, 'Parámetros del algoritmo de control de aireación (PID, Fuzzy, límites RPM y consignas)')
 ON CONFLICT (key) DO NOTHING;
 
 -- ==============================================================================
 -- DATOS INICIALES DE DISPOSITIVOS DE PRUEBA / PRODUCCIÓN
 -- Token ESP32 Sensor Demo: "ESP32_SENSOR_KEY_2026" -> SHA256: 7d1b32d2ea78fcbe09d4352bb071e6261f224fa8be388e63a18a9fc8167fe307
 -- Token ESP32 Motor Demo:  "ESP32_MOTOR_KEY_2026"  -> SHA256: 3c5eefcf38e12480a47d2524dc0f3684a0d9e187fc38efae85ba83c21c7a52ca
+-- Token ESP32 ESC Auxiliar:"ESP32_ESC_KEY_2026"    -> SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 -- ==============================================================================
-INSERT INTO public.devices (id, name, type, api_key_hash, location, status, last_seen_at)
+INSERT INTO public.devices (id, name, type, api_key_hash, location, status, last_seen_at, metadata)
 VALUES
-    ('a0000000-0000-0000-0000-000000000001', 'Sensor Óptico OD - Estanque 1', 'sensor_do', '7d1b32d2ea78fcbe09d4352bb071e6261f224fa8be388e63a18a9fc8167fe307', 'Estanque Principal (Zona Norte)', 'online', NOW()),
-    ('b0000000-0000-0000-0000-000000000002', 'Aireador Thruster T200 - Estanque 1', 'motor_thruster', '3c5eefcf38e12480a47d2524dc0f3684a0d9e187fc38efae85ba83c21c7a52ca', 'Estanque Principal (Zona Central)', 'online', NOW())
+    ('a0000000-0000-0000-0000-000000000001', 'Sensor Óptico OD - Estanque 1', 'sensor_do', '7d1b32d2ea78fcbe09d4352bb071e6261f224fa8be388e63a18a9fc8167fe307', 'Estanque Principal (Zona Norte)', 'online', NOW(), '{"sensor_model": "Aqualabo DIGISENS", "interface": "Modbus RS485"}'::jsonb),
+    ('b0000000-0000-0000-0000-000000000002', 'Controlador ODrive S1 - Estanque 1', 'motor_thruster', '3c5eefcf38e12480a47d2524dc0f3684a0d9e187fc38efae85ba83c21c7a52ca', 'Estanque Principal (Zona Central)', 'online', NOW(), '{"controller_model": "ODrive S1", "interface": "UART ASCII", "control_mode": "pid"}'::jsonb),
+    ('c0000000-0000-0000-0000-000000000003', 'Aireador Auxiliar ESC (Banco de Pruebas)', 'motor_thruster', 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', 'Laboratorio / Banco de Pruebas', 'offline', NOW(), '{"controller_model": "ESP32-S3 ESC PWM", "status": "auxiliary_backup"}'::jsonb)
 ON CONFLICT (id) DO UPDATE SET 
     name = EXCLUDED.name,
     status = EXCLUDED.status,
+    metadata = EXCLUDED.metadata,
     last_seen_at = EXCLUDED.last_seen_at;
 
 -- Insertar lectura inicial de ejemplo
