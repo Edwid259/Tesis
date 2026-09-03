@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Header } from '@/components/Header';
 import { MetricCards } from '@/components/MetricCards';
 import { MotorControlPanel } from '@/components/MotorControlPanel';
+import { EscT200ControlPanel } from '@/components/EscT200ControlPanel';
 import { ChartsSection } from '@/components/ChartsSection';
 import { EventsTable } from '@/components/EventsTable';
 import { AlertsPanel } from '@/components/AlertsPanel';
@@ -17,8 +18,10 @@ import {
   demoThresholds,
   demoSensorDevice,
   demoMotorDevice,
+  demoEscDevice,
   getDemoLatestSensorReading,
   getDemoLatestMotorTelemetry,
+  getDemoLatestEscTelemetry,
   generateDemoHistory,
   demoEvents,
   demoAlerts
@@ -29,8 +32,10 @@ export default function DashboardPage() {
   const [summary, setSummary] = useState<DashboardSummaryResponse>({
     sensorDevice: demoSensorDevice,
     motorDevice: demoMotorDevice,
+    escDevice: demoEscDevice,
     latestSensorReading: getDemoLatestSensorReading(),
     latestMotorTelemetry: getDemoLatestMotorTelemetry(),
+    latestEscTelemetry: getDemoLatestEscTelemetry(),
     thresholds: demoThresholds,
     activeAlertsCount: 1,
     systemHealth: 'optimal',
@@ -124,6 +129,7 @@ export default function DashboardPage() {
       <Header
         sensorDevice={summary.sensorDevice}
         motorDevice={summary.motorDevice}
+        escDevice={summary.escDevice}
         isLive={summary.isLive}
         isLoading={isLoading}
         onRefresh={() => fetchDashboardData(false)}
@@ -144,7 +150,7 @@ export default function DashboardPage() {
                 Monitoreo y Control en Tiempo Real - Estanque Principal
               </h2>
               <p className="text-xs text-slate-400">
-                Sistema IoT con sensor óptico de Oxígeno Disuelto y propulsor Blue Robotics T200 (ESC PWM)
+                Lazo cerrado con sensor óptico de OD, actuador principal ODrive S1 (M8325s) y propulsor auxiliar T-200 (ESC PWM)
               </p>
             </div>
           </div>
@@ -165,13 +171,22 @@ export default function DashboardPage() {
           />
         </section>
 
-        {/* 2. Panel de Control del Aireador Thruster T200 */}
-        <section>
-          <MotorControlPanel
-            motorDevice={summary.motorDevice}
-            currentTelemetry={summary.latestMotorTelemetry}
-            onCommandSent={() => fetchDashboardData(true)}
-          />
+        {/* 2. Paneles de Control de Aireación (Dual: ODrive S1 Principal & T-200 ESC Auxiliar) */}
+        <section className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-stretch">
+          <div className="xl:col-span-2">
+            <MotorControlPanel
+              motorDevice={summary.motorDevice}
+              currentTelemetry={summary.latestMotorTelemetry}
+              onCommandSent={() => fetchDashboardData(true)}
+            />
+          </div>
+          <div className="xl:col-span-1">
+            <EscT200ControlPanel
+              escDevice={summary.escDevice || null}
+              currentTelemetry={summary.latestEscTelemetry || null}
+              onCommandSent={() => fetchDashboardData(true)}
+            />
+          </div>
         </section>
 
         {/* 3. Gráficas Principales (OD, Velocidad y Combinada con doble eje) */}

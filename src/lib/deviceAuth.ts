@@ -20,13 +20,26 @@ export async function authenticateDevice(req: NextRequest, expectedType?: string
 
   // Si Supabase no está configurado en producción todavía, permitir llaves demo conocidas
   if (!isSupabaseConfigured()) {
-    if (deviceKey === 'ESP32_SENSOR_KEY_2026' || deviceKey === 'ESP32_MOTOR_KEY_2026') {
-      const isSensor = deviceKey === 'ESP32_SENSOR_KEY_2026';
+    if (deviceKey === 'ESP32_SENSOR_KEY_2026' || deviceKey === 'ESP32_MOTOR_KEY_2026' || deviceKey === 'ESP32_ESC_KEY_2026') {
+      let id = 'b0000000-0000-0000-0000-000000000002';
+      let name = 'Controlador ODrive S1 (Modo Local)';
+      let type: import('@/types').DeviceType = 'motor_thruster';
+
+      if (deviceKey === 'ESP32_SENSOR_KEY_2026') {
+        id = 'a0000000-0000-0000-0000-000000000001';
+        name = 'Sensor Óptico OD (Modo Local)';
+        type = 'sensor_do';
+      } else if (deviceKey === 'ESP32_ESC_KEY_2026') {
+        id = 'c0000000-0000-0000-0000-000000000003';
+        name = 'Aireador Auxiliar ESC T-200 (Modo Local)';
+        type = 'motor_thruster';
+      }
+
       return {
         device: {
-          id: isSensor ? 'a0000000-0000-0000-0000-000000000001' : 'b0000000-0000-0000-0000-000000000002',
-          name: isSensor ? 'Sensor Óptico OD (Modo Local)' : 'Aireador Thruster T200 (Modo Local)',
-          type: isSensor ? 'sensor_do' : 'motor_thruster',
+          id,
+          name,
+          type,
           location: 'Estanque Principal',
           status: 'online',
           last_seen_at: new Date().toISOString(),

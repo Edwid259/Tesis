@@ -119,8 +119,10 @@ export interface ScaleFactors {
 export interface DashboardSummaryResponse {
   sensorDevice: Device | null;
   motorDevice: Device | null;
+  escDevice?: Device | null;
   latestSensorReading: SensorReading | null;
   latestMotorTelemetry: MotorTelemetry | null;
+  latestEscTelemetry?: MotorTelemetry | null;
   thresholds: SystemThresholds;
   activeAlertsCount: number;
   systemHealth: 'optimal' | 'warning' | 'critical' | 'offline';

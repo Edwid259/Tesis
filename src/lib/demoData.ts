@@ -29,12 +29,24 @@ export const demoSensorDevice: Device = {
 
 export const demoMotorDevice: Device = {
   id: 'b0000000-0000-0000-0000-000000000002',
-  name: 'Aireador Thruster T200 - Estanque 1',
+  name: 'Controlador ODrive S1 (M8325s) - Estanque 1',
   type: 'motor_thruster',
   location: 'Estanque Principal (Zona Central)',
   status: 'online',
   last_seen_at: new Date().toISOString(),
-  created_at: '2026-08-01T00:00:00Z'
+  created_at: '2026-08-01T00:00:00Z',
+  metadata: { controller_model: 'ODrive S1', motor: 'M8325s', interface: 'UART ASCII' }
+};
+
+export const demoEscDevice: Device = {
+  id: 'c0000000-0000-0000-0000-000000000003',
+  name: 'Aireador Auxiliar T-200 (ESC) - Banco de Pruebas',
+  type: 'motor_thruster',
+  location: 'Laboratorio / Banco de Pruebas',
+  status: 'online',
+  last_seen_at: new Date().toISOString(),
+  created_at: '2026-08-01T00:00:00Z',
+  metadata: { controller_model: 'ESP32-S3 ESC PWM', motor: 'Blue Robotics T200' }
 };
 
 export function getDemoLatestSensorReading(): SensorReading {
@@ -68,9 +80,24 @@ export function getDemoLatestMotorTelemetry(): MotorTelemetry {
     is_on: true,
     speed_percent: 65,
     pwm_us: 1760,
+    voltage_v: 24.1,
+    current_a: 6.2,
+    power_w: 149.4,
+    status_code: 0
+  };
+}
+
+export function getDemoLatestEscTelemetry(): MotorTelemetry {
+  return {
+    id: 202,
+    device_id: demoEscDevice.id,
+    recorded_at: new Date().toISOString(),
+    is_on: false,
+    speed_percent: 0,
+    pwm_us: 1500,
     voltage_v: 14.8,
-    current_a: 8.5,
-    power_w: 125.8,
+    current_a: 0.0,
+    power_w: 0.0,
     status_code: 0
   };
 }

@@ -3,8 +3,10 @@ import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import {
   demoSensorDevice,
   demoMotorDevice,
+  demoEscDevice,
   getDemoLatestSensorReading,
   getDemoLatestMotorTelemetry,
+  getDemoLatestEscTelemetry,
   demoThresholds
 } from '@/lib/demoData';
 import { DashboardSummaryResponse } from '@/types';
@@ -21,8 +23,10 @@ export async function GET(req: NextRequest) {
       const summary: DashboardSummaryResponse = {
         sensorDevice: demoSensorDevice,
         motorDevice: demoMotorDevice,
+        escDevice: demoEscDevice,
         latestSensorReading: getDemoLatestSensorReading(),
         latestMotorTelemetry: getDemoLatestMotorTelemetry(),
+        latestEscTelemetry: getDemoLatestEscTelemetry(),
         thresholds: demoThresholds,
         activeAlertsCount: 1,
         systemHealth: 'optimal',
@@ -37,7 +41,18 @@ export async function GET(req: NextRequest) {
       .select('*');
 
     const sensorDevice = devices?.find(d => d.type === 'sensor_do') || null;
-    const motorDevice = devices?.find(d => d.type === 'motor_thruster') || null;
+    
+    // Actuador Principal: ODrive S1 (M8325s)
+    const motorDevice = devices?.find(d => 
+      d.id === 'b0000000-0000-0000-0000-000000000002' || 
+      (d.type === 'motor_thruster' && (d.metadata?.controller_model === 'ODrive S1' || d.name?.includes('ODrive')))
+    ) || devices?.find(d => d.type === 'motor_thruster') || null;
+
+    // Actuador Auxiliar: T-200 con ESC
+    const escDevice = devices?.find(d => 
+      d.id === 'c0000000-0000-0000-0000-000000000003' || 
+      (d.type === 'motor_thruster' && d.id !== motorDevice?.id)
+    ) || null;
 
     // 2. Obtener última lectura de sensor
     let latestSensorReading = null;
@@ -54,7 +69,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 3. Obtener última telemetría de motor
+    // 3. Obtener última telemetría de ODrive S1
     let latestMotorTelemetry = null;
     if (motorDevice) {
       const { data: telemetries } = await supabaseAdmin
@@ -69,13 +84,28 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 4. Contar alertas activas
+    // 4. Obtener última telemetría de ESC Auxiliar (T-200)
+    let latestEscTelemetry = null;
+    if (escDevice) {
+      const { data: escTelemetries } = await supabaseAdmin
+        .from('motor_telemetry')
+        .select('*')
+        .eq('device_id', escDevice.id)
+        .order('recorded_at', { ascending: false })
+        .limit(1);
+      
+      if (escTelemetries && escTelemetries.length > 0) {
+        latestEscTelemetry = escTelemetries[0];
+      }
+    }
+
+    // 5. Contar alertas activas
     const { count: activeAlertsCount } = await supabaseAdmin
       .from('alerts')
       .select('*', { count: 'exact', head: true })
       .eq('status', 'activa');
 
-    // 5. Determinar salud general del sistema
+    // 6. Determinar salud general del sistema
     let systemHealth: 'optimal' | 'warning' | 'critical' | 'offline' = 'optimal';
     if (latestSensorReading) {
       const doVal = Number(latestSensorReading.dissolved_oxygen_mg_l);
@@ -91,8 +121,10 @@ export async function GET(req: NextRequest) {
     const summary: DashboardSummaryResponse = {
       sensorDevice,
       motorDevice,
+      escDevice,
       latestSensorReading,
       latestMotorTelemetry,
+      latestEscTelemetry,
       thresholds: demoThresholds,
       activeAlertsCount: activeAlertsCount || 0,
       systemHealth,

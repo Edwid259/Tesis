@@ -7,6 +7,7 @@ import { Device } from '@/types';
 interface HeaderProps {
   sensorDevice: Device | null;
   motorDevice: Device | null;
+  escDevice?: Device | null;
   isLive: boolean;
   isLoading: boolean;
   onRefresh: () => void;
@@ -16,6 +17,7 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   sensorDevice,
   motorDevice,
+  escDevice,
   isLive,
   isLoading,
   onRefresh,
@@ -23,7 +25,7 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const isSensorOnline = sensorDevice?.status === 'online';
   const isMotorOnline = motorDevice?.status === 'online';
-  const allOnline = isSensorOnline && isMotorOnline;
+  const isEscOnline = escDevice?.status === 'online';
 
   return (
     <header className="glass-panel sticky top-0 z-50 border-b border-cyan-900/30 px-4 lg:px-8 py-3.5 flex flex-wrap items-center justify-between gap-4">
@@ -42,15 +44,15 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
           </div>
           <p className="text-xs text-slate-400 font-medium">
-            Supervisión de OD & Control de Aireador Thruster T200
+            Supervisión de OD & Control Dual de Aireación (ODrive S1 & T200)
           </p>
         </div>
       </div>
 
       {/* Dispositivos y Estado de Red */}
-      <div className="flex items-center gap-3 sm:gap-6">
+      <div className="flex items-center gap-2 sm:gap-4 flex-wrap">
         {/* Sensor Status Pill */}
-        <div className="flex items-center gap-2 bg-slate-900/80 px-3 py-1.5 rounded-lg border border-slate-800">
+        <div className="flex items-center gap-2 bg-slate-900/80 px-2.5 py-1.5 rounded-lg border border-slate-800">
           <div className={`w-2 h-2 rounded-full ${isSensorOnline ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-rose-500'}`} />
           <div className="text-left">
             <div className="text-[11px] font-medium text-slate-300 flex items-center gap-1">
@@ -63,16 +65,30 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Motor Thruster Status Pill */}
-        <div className="flex items-center gap-2 bg-slate-900/80 px-3 py-1.5 rounded-lg border border-slate-800">
+        {/* ODrive Status Pill */}
+        <div className="flex items-center gap-2 bg-slate-900/80 px-2.5 py-1.5 rounded-lg border border-slate-800">
           <div className={`w-2 h-2 rounded-full ${isMotorOnline ? 'bg-cyan-400 shadow-[0_0_8px_#22d3ee]' : 'bg-rose-500'}`} />
           <div className="text-left">
             <div className="text-[11px] font-medium text-slate-300 flex items-center gap-1">
-              <span>Thruster T200</span>
+              <span>ODrive S1</span>
               {isMotorOnline ? <Wifi className="w-3 h-3 text-cyan-400" /> : <WifiOff className="w-3 h-3 text-rose-400" />}
             </div>
             <div className="text-[9px] text-slate-500">
               {isMotorOnline ? 'En línea' : 'Desconectado'}
+            </div>
+          </div>
+        </div>
+
+        {/* ESC T-200 Status Pill */}
+        <div className="flex items-center gap-2 bg-slate-900/80 px-2.5 py-1.5 rounded-lg border border-slate-800">
+          <div className={`w-2 h-2 rounded-full ${isEscOnline ? 'bg-amber-400 shadow-[0_0_8px_#fbbf24]' : 'bg-rose-500'}`} />
+          <div className="text-left">
+            <div className="text-[11px] font-medium text-slate-300 flex items-center gap-1">
+              <span>T-200 (ESC)</span>
+              {isEscOnline ? <Wifi className="w-3 h-3 text-amber-400" /> : <WifiOff className="w-3 h-3 text-rose-400" />}
+            </div>
+            <div className="text-[9px] text-slate-500">
+              {isEscOnline ? 'En línea' : 'Desconectado'}
             </div>
           </div>
         </div>

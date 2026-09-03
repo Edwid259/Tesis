@@ -56,13 +56,10 @@ export const MotorControlPanel: React.FC<MotorControlPanelProps> = ({
     }
   }, [currentTelemetry, controlMode]);
 
-  // Cálculo de RPM y PWM estimados
-  // 100% velocidad equivale a ~3500 RPM / 1900 µs
+  // Cálculo de RPM estimadas (100% velocidad equivale a 3500 RPM)
   const estimatedRpm = controlMode === 'manual' 
     ? (!isOn ? 0 : Math.round((targetSpeed / 100) * 3500))
     : Math.round(((currentTelemetry?.speed_percent ?? 0) / 100) * 3500);
-
-  const estimatedPwm = !isOn ? 1500 : Math.round(1500 + (targetSpeed / 100) * 400);
 
   // Parada de Emergencia Inmediata
   const handleEmergencyStop = async () => {
@@ -186,7 +183,7 @@ export const MotorControlPanel: React.FC<MotorControlPanelProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h3 className="text-base font-bold text-white tracking-wide">
-                Control de Aireación (ODrive S1 & Motor Brushless)
+                Control Principal de Aireación (ODrive S1 — M8325s)
               </h3>
               {isDeviceOnline ? (
                 <span className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800">
@@ -310,8 +307,8 @@ export const MotorControlPanel: React.FC<MotorControlPanelProps> = ({
             </div>
 
             <div className="flex justify-between text-[11px] text-slate-400">
-              <span>Señal PWM ESC: <strong className="text-amber-400">{estimatedPwm} µs</strong></span>
-              <span>Velocidad ODrive: <strong className="text-slate-200">{estimatedRpm} RPM</strong></span>
+              <span>Rango FOC: <strong className="text-slate-400">0 – 3500 RPM</strong></span>
+              <span>Velocidad ODrive: <strong className="text-amber-400 font-bold">{estimatedRpm} RPM</strong></span>
             </div>
           </div>
 
