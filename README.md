@@ -47,9 +47,15 @@ NEXT_PUBLIC_SUPABASE_URL=https://tu-proyecto.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOi...
 SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOi...
 
-# Tokens secretos de los ESP32 (Se valida contra SHA-256 en la base de datos)
+# Tokens secretos y aliases de microcontroladores ESP32 (leídos de process.env o hash SHA-256 en BD)
+ESP32_OD_SENSOR=ESP32_OD_SENSOR
+ESP32_ODRIVE=ESP32_ODRIVE
+ESP32_T_200=ESP32_T_200
+
+# Tokens de retrocompatibilidad / desarrollo local
 ESP32_SENSOR_DEVICE_KEY=ESP32_SENSOR_KEY_2026
 ESP32_MOTOR_DEVICE_KEY=ESP32_MOTOR_KEY_2026
+ESP32_ESC_DEVICE_KEY=ESP32_ESC_KEY_2026
 ```
 
 ---
@@ -59,30 +65,35 @@ ESP32_MOTOR_DEVICE_KEY=ESP32_MOTOR_KEY_2026
 1. Sube este repositorio a tu cuenta de **GitHub**.
 2. Ingresa a [Vercel](https://vercel.com/) y selecciona **Add New Project**.
 3. Importa el repositorio de GitHub.
-4. En la sección **Environment Variables**, añade las mismas variables de tu `.env.local`.
+4. En la sección **Environment Variables**, añade las variables:
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+   - `ESP32_OD_SENSOR`
+   - `ESP32_ODRIVE`
+   - `ESP32_T_200`
 5. Haz clic en **Deploy**. ¡Tu dashboard quedará pública bajo HTTPS en segundos!
 
 ---
 
 ## 5. Guía de Conexión para los Microcontroladores ESP32
 
-Ambos ESP32 deben enviar peticiones HTTPS seguras incluyendo la cabecera `X-Device-Key`.
+Todos los microcontroladores se comunican mediante peticiones HTTPS seguras incluyendo la cabecera `X-Device-Key`.
 
 ### A. ESP32 del Sensor Óptico de Oxígeno Disuelto
-
-**Endpoint:** `POST https://tu-dominio.vercel.app/api/telemetry/sensor`  
-**Header:** `X-Device-Key: ESP32_SENSOR_KEY_2026`  
-**Ejemplo de Payload JSON enviado por el ESP32:**
-
+- **Endpoint:** `POST https://tu-dominio.vercel.app/api/telemetry/sensor`  
+- **Header:** `X-Device-Key: ESP32_OD_SENSOR` (o `ESP32_SENSOR_KEY_2026`)  
+- **ID en Base de Datos:** `a0000000-0000-0000-0000-000000000001`
+- **Payload JSON:**
 ```json
 {
-  "datetime": "2026-08-31T15:00:00Z",
-  "seconds_since_2000": 841500000,
+  "datetime": "2026-09-06T15:00:00Z",
+  "seconds_since_2000": 842048000,
   "water_temp_centi": 2305,
   "do_centi_mg_l": 7874,
   "do_sat_deci_pct": 985,
-  "param3_centi": 1024,
-  "param4_centi": 2048,
+  "param3_centi": 0,
+  "param4_centi": 0,
   "battery_mv": 4246,
   "rtc_temp_centi": 2410,
   "status": 0,
@@ -90,74 +101,47 @@ Ambos ESP32 deben enviar peticiones HTTPS seguras incluyendo la cabecera `X-Devi
 }
 ```
 
-*Nota sobre escalas:*
-- `do_centi_mg_l = 7874` se almacena en bruto y se normaliza automáticamente a `7.874 mg/L`.
-- `water_temp_centi = 2305` se almacena en bruto y se normaliza a `23.05 °C`.
-- `battery_mv = 4246` se normaliza a `4.25 V`.
+---
+
+### B. ESP32 del Actuador Principal (ODrive S1 - Motor M8325s)
+- **Endpoint de Telemetría:** `POST https://tu-dominio.vercel.app/api/telemetry/motor`  
+- **Endpoint de Comandos:** `GET https://tu-dominio.vercel.app/api/commands/pending`  
+- **Header:** `X-Device-Key: ESP32_ODRIVE` (o `ESP32_MOTOR_KEY_2026`)  
+- **ID en Base de Datos:** `b0000000-0000-0000-0000-000000000002`
 
 ---
 
-### B. ESP32 del Aireador (Thruster Blue Robotics T200)
+### C. ESP32 del Actuador Auxiliar (ESC T-200 - PWM 50Hz)
+- **Endpoint de Telemetría:** `POST https://tu-dominio.vercel.app/api/telemetry/motor`  
+- **Endpoint de Comandos:** `GET https://tu-dominio.vercel.app/api/commands/pending`  
+- **Header:** `X-Device-Key: ESP32_T_200` (o `ESP32_ESC_KEY_2026`)  
+- **ID en Base de Datos:** `c0000000-0000-0000-0000-000000000003`
 
-**1. Envío de Telemetría:**  
-**Endpoint:** `POST https://tu-dominio.vercel.app/api/telemetry/motor`  
-**Header:** `X-Device-Key: ESP32_MOTOR_KEY_2026`  
-**Payload JSON:**
+---
 
-```json
-{
-  "datetime": "2026-08-31T15:00:00Z",
-  "is_on": true,
-  "speed_percent": 65.0,
-  "pwm_us": 1760,
-  "voltage_v": 14.8,
-  "current_a": 8.5,
-  "power_w": 125.8,
-  "status_code": 0
-}
-```
+## 6. Pruebas Automatizadas y Auto-Verificación
 
-**2. Consulta de Comandos Pendientes (Polling cada 3-5 segundos):**  
-**Endpoint:** `GET https://tu-dominio.vercel.app/api/commands/pending`  
-**Header:** `X-Device-Key: ESP32_MOTOR_KEY_2026`  
+El proyecto incluye scripts independientes de aserción (`assert`) para verificar la integridad del sistema sin necesidad de frameworks pesados:
 
-**Respuesta recibida por el ESP32:**
-```json
-{
-  "has_command": true,
-  "command": {
-    "id": "e4f801bc-...",
-    "command_type": "set_speed",
-    "speed_percent": 75,
-    "pwm_us": 1800
-  }
-}
-```
+```bash
+# 1. Verificar autenticación híbrida y hashing SHA-256 (6 pruebas)
+node scripts/verify-device-auth.js
 
-**3. Confirmación de Ejecución de la Orden:**  
-**Endpoint:** `POST https://tu-dominio.vercel.app/api/commands/{id}/acknowledge`  
-**Header:** `X-Device-Key: ESP32_MOTOR_KEY_2026`  
-**Payload:**
-```json
-{
-  "success": true,
-  "actual_speed_percent": 75
-}
+# 2. Verificar comunicación y separación de comandos ODrive S1 vs ESC T-200 (5 pruebas)
+node scripts/verify-motor-comms.js
+
+# 3. Verificar heartbeat de 60s, supresión de telemetría y zona horaria GMT-5 (5 pruebas)
+node scripts/verify-dashboard-fixes.js
+
+# 4. Compilación completa de Next.js
+npm run build
 ```
 
 ---
 
-## 6. Pruebas Locales y Simulación
+## 7. Zona Horaria y Sincronización en Tiempo Real
 
-Para probar la plataforma en tu equipo sin hardware físico:
-
-1. Inicia el servidor de desarrollo:
-   ```bash
-   npm run dev
-   ```
-2. Abre en tu navegador: [http://localhost:3000](http://localhost:3000).
-3. En otra terminal, ejecuta el simulador de ambos ESP32:
-   ```bash
-   node scripts/simulate-esp32.js
-   ```
-4. Podrás ver en tiempo real cómo las tarjetas, gráficas y estados se actualizan automáticamente y cómo responde el simulador al enviar órdenes desde la web.
+- **Zona Horaria de Perú (GMT-5):** Todas las marcas de tiempo en gráficos, tablas (`EventsTable`, `AlertsPanel`) y tarjetas de KPI se formatean en hora local de Lima mediante [`src/lib/dateUtils.ts`](file:///src/lib/dateUtils.ts).
+- **Heartbeat Dinámico (60 segundos):** Si un dispositivo no transmite telemetría durante más de 60 segundos, su estado cambia automáticamente a `offline`.
+- **Supresión de Estados Fantasma:** Si un actuador está desconectado físicamente, la API y la interfaz web fuerzan `is_on = false`, `0%` de velocidad y `0 W` de potencia para evitar reportar erróneamente un estado activo.
+- **Prevención de Caché:** Las consultas en `/api/dashboard/summary` implementan directivas HTTP `no-store` y `revalidate = 0` para garantizar que cada refresco cada 15 segundos refleje el estado real e instantáneo del estanque.
