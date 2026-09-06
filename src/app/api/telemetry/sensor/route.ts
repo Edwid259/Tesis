@@ -91,7 +91,10 @@ export async function POST(req: NextRequest) {
 
       if (insertError) {
         console.error('Error insertando lectura de sensor en Supabase:', insertError);
-        return NextResponse.json({ error: 'Error al persistir telemetría' }, { status: 500 });
+        return NextResponse.json(
+          { error: 'Error al persistir telemetría', details: insertError.message || insertError },
+          { status: 500 }
+        );
       }
 
       // 5. Evaluar reglas de alerta automática si el OD es crítico o bajo
