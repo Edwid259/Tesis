@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { generateDemoHistory } from '@/lib/demoData';
+import { formatPeruTime, formatPeruDateTime } from '@/lib/dateUtils';
 import { HistoryDataPoint } from '@/types';
 
 export const dynamic = 'force-dynamic';
@@ -19,6 +20,8 @@ export async function GET(req: NextRequest) {
     if (range === '1h') hours = 1;
     else if (range === '24h') hours = 24;
     else if (range === '7d') hours = 24 * 7;
+
+    const formatLabel = (date: Date) => (range === '7d' ? formatPeruDateTime(date) : formatPeruTime(date));
 
     if (!isSupabaseConfigured()) {
       const demoData = generateDemoHistory(hours);
@@ -89,7 +92,7 @@ export async function GET(req: NextRequest) {
       const date = new Date(s.recorded_at);
       historyPoints.push({
         timestamp: s.recorded_at,
-        timeLabel: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timeLabel: formatLabel(date),
         dissolved_oxygen_mg_l: Number(s.dissolved_oxygen_mg_l),
         oxygen_saturation_pct: s.oxygen_saturation_pct ? Number(s.oxygen_saturation_pct) : undefined,
         water_temperature_c: Number(s.water_temperature_c),
@@ -108,7 +111,7 @@ export async function GET(req: NextRequest) {
       } else {
         historyPoints.push({
           timestamp: m.recorded_at,
-          timeLabel: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          timeLabel: formatLabel(date),
           motor_speed_percent: Number(m.speed_percent),
           motor_is_on: Boolean(m.is_on),
           motor_power_w: m.power_w ? Number(m.power_w) : undefined

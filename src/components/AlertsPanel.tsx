@@ -3,6 +3,7 @@
 import React from 'react';
 import { Alert } from '@/types';
 import { AlertTriangle, AlertOctagon, Info, CheckCircle, Clock, ShieldCheck } from 'lucide-react';
+import { formatPeruDateTime } from '@/lib/dateUtils';
 
 interface AlertsPanelProps {
   alerts: Alert[];
@@ -98,14 +99,7 @@ export const AlertsPanel: React.FC<AlertsPanelProps> = ({ alerts, onAcknowledgeA
                   </div>
                   <div className="flex items-center gap-2 text-[11px] text-slate-400">
                     <Clock className="w-3 h-3 text-slate-500" />
-                    <span>
-                      {new Date(alert.created_at).toLocaleString([], {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                      })}
-                    </span>
+                    <span>{formatPeruDateTime(alert.created_at)}</span>
                   </div>
                 </div>
               </div>

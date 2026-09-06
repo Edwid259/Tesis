@@ -27,26 +27,28 @@ import {
   demoAlerts
 } from '@/lib/demoData';
 import { ShieldCheck, Info, Sparkles, Sliders } from 'lucide-react';
+import { formatPeruTime } from '@/lib/dateUtils';
 
 export default function DashboardPage() {
+  // Estado principal consolidado
   const [summary, setSummary] = useState<DashboardSummaryResponse>({
-    sensorDevice: demoSensorDevice,
-    motorDevice: demoMotorDevice,
-    escDevice: demoEscDevice,
-    latestSensorReading: getDemoLatestSensorReading(),
-    latestMotorTelemetry: getDemoLatestMotorTelemetry(),
-    latestEscTelemetry: getDemoLatestEscTelemetry(),
+    sensorDevice: null,
+    motorDevice: null,
+    escDevice: null,
+    latestSensorReading: null,
+    latestMotorTelemetry: null,
+    latestEscTelemetry: null,
     thresholds: demoThresholds,
-    activeAlertsCount: 1,
+    activeAlertsCount: 0,
     systemHealth: 'optimal',
     isLive: false
   });
 
   const [history, setHistory] = useState<HistoryDataPoint[]>([]);
-  const [events, setEvents] = useState<MotorEvent[]>(demoEvents);
-  const [alerts, setAlerts] = useState<Alert[]>(demoAlerts);
+  const [events, setEvents] = useState<MotorEvent[]>([]);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
   const [selectedRange, setSelectedRange] = useState<string>('24h');
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [lastUpdated, setLastUpdated] = useState<string>('Recién cargado');
 
   // Función principal para cargar datos de la dashboard
@@ -82,8 +84,7 @@ export default function DashboardPage() {
         setAlerts(alertsData.alerts || []);
       }
 
-      const now = new Date();
-      setLastUpdated(`Actualizado: ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`);
+      setLastUpdated(`Actualizado: ${formatPeruTime(new Date(), true)} (GMT-5)`);
     } catch (err) {
       console.error('Error refrescando datos de dashboard:', err);
       // Si ocurre un error de red local, mantener datos demo
@@ -168,6 +169,8 @@ export default function DashboardPage() {
             motor={summary.latestMotorTelemetry}
             thresholds={summary.thresholds}
             lastUpdated={lastUpdated}
+            motorDevice={summary.motorDevice}
+            sensorDevice={summary.sensorDevice}
           />
         </section>
 

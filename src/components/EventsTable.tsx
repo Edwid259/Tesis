@@ -3,6 +3,7 @@
 import React from 'react';
 import { MotorEvent } from '@/types';
 import { History, Play, Square, FastForward, AlertTriangle, Radio } from 'lucide-react';
+import { formatPeruDateTime } from '@/lib/dateUtils';
 
 interface EventsTableProps {
   events: MotorEvent[];
@@ -69,8 +70,13 @@ export const EventsTable: React.FC<EventsTableProps> = ({ events }) => {
             <History className="w-4 h-4 text-cyan-400" />
           </div>
           <div>
-            <h3 className="text-sm font-bold text-white">Registro de Eventos Recientes</h3>
-            <p className="text-xs text-slate-400">Historial de conmutaciones y órdenes al aireador</p>
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <span>Registro de Eventos del Motor</span>
+              <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-medium">
+                Últimas 24h
+              </span>
+            </h3>
+            <p className="text-xs text-slate-400">Encendidos, paradas, y variaciones de velocidad registradas</p>
           </div>
         </div>
         <span className="text-xs text-slate-500 font-medium">
@@ -82,7 +88,7 @@ export const EventsTable: React.FC<EventsTableProps> = ({ events }) => {
         <table className="w-full text-left text-xs text-slate-300">
           <thead className="bg-slate-900/80 uppercase text-[11px] text-slate-400 font-semibold border-y border-slate-800">
             <tr>
-              <th className="py-2.5 px-3">Fecha y Hora</th>
+              <th className="py-2.5 px-3">Fecha y Hora (GMT-5)</th>
               <th className="py-2.5 px-3">Tipo de Evento</th>
               <th className="py-2.5 px-3">Velocidad / PWM</th>
               <th className="py-2.5 px-3">Origen</th>
@@ -99,14 +105,8 @@ export const EventsTable: React.FC<EventsTableProps> = ({ events }) => {
             ) : (
               events.slice(0, 8).map((evt, idx) => (
                 <tr key={evt.id || idx} className="hover:bg-slate-800/30 transition-colors">
-                  <td className="py-2.5 px-3 whitespace-nowrap text-slate-300">
-                    {new Date(evt.started_at).toLocaleString([], {
-                      month: 'short',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      second: '2-digit'
-                    })}
+                  <td className="py-2.5 px-3 whitespace-nowrap text-slate-300 font-mono text-[11px]">
+                    {formatPeruDateTime(evt.started_at, true)}
                   </td>
                   <td className="py-2.5 px-3">{getEventBadge(evt.event_type)}</td>
                   <td className="py-2.5 px-3 whitespace-nowrap">

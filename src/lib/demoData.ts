@@ -126,7 +126,7 @@ export function generateDemoHistory(hours: number = 24): HistoryDataPoint[] {
 
     points.push({
       timestamp: time.toISOString(),
-      timeLabel: time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timeLabel: time.toLocaleTimeString('es-PE', { timeZone: 'America/Lima', hour: '2-digit', minute: '2-digit', hour12: false }),
       dissolved_oxygen_mg_l: formattedDO,
       oxygen_saturation_pct: formattedSat,
       water_temperature_c: formattedTemp,

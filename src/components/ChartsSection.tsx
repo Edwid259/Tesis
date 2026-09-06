@@ -49,8 +49,8 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
       return (
         <div className="bg-slate-950/95 border border-slate-700/80 p-3 rounded-xl shadow-2xl backdrop-blur-md text-xs">
           <p className="font-semibold text-slate-300 mb-1.5 border-b border-slate-800 pb-1 flex items-center justify-between gap-4">
-            <span>Hora de lectura:</span>
-            <span className="text-cyan-400">{label}</span>
+            <span>Hora de lectura (GMT-5):</span>
+            <span className="text-cyan-400 font-bold">{label}</span>
           </p>
           <div className="space-y-1">
             {payload.map((entry: any, index: number) => (
@@ -109,8 +109,11 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
           </button>
         </div>
 
-        {/* Filtros de Rango Temporal */}
-        <div className="flex items-center gap-2">
+        {/* Filtros de Rango Temporal y Zona Horaria */}
+        <div className="flex items-center gap-2.5">
+          <span className="hidden sm:inline-block text-[11px] text-cyan-400/90 font-medium px-2.5 py-1 rounded-lg bg-cyan-950/60 border border-cyan-900/60">
+            Zona: Perú (GMT-5)
+          </span>
           <div className="flex items-center gap-1 bg-slate-900/90 p-1 rounded-xl border border-slate-800">
             {ranges.map((r) => (
               <button
