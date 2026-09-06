@@ -12,6 +12,8 @@ import {
 import { DashboardSummaryResponse, Device } from '@/types';
 
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+export const fetchCache = 'force-no-store';
 
 const HEARTBEAT_TIMEOUT_MS = 60 * 1000; // 60 segundos sin telemetría -> offline
 
@@ -50,11 +52,11 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(summary);
     }
 
-    // 1. Obtener última lectura de sensor en tiempo real desde sensor_readings
+    // 1. Obtener última lectura de sensor en tiempo real desde sensor_readings (ordenada por ID descendente)
     const { data: latestReadings } = await supabaseAdmin
       .from('sensor_readings')
       .select('*')
-      .order('recorded_at', { ascending: false })
+      .order('id', { ascending: false })
       .limit(1);
     const latestSensorReading = latestReadings && latestReadings.length > 0 ? latestReadings[0] : null;
 
@@ -120,7 +122,7 @@ export async function GET(req: NextRequest) {
         .from('motor_telemetry')
         .select('*')
         .eq('device_id', rawMotor.id)
-        .order('recorded_at', { ascending: false })
+        .order('id', { ascending: false })
         .limit(1);
       
       if (telemetries && telemetries.length > 0) {
@@ -172,7 +174,7 @@ export async function GET(req: NextRequest) {
         .from('motor_telemetry')
         .select('*')
         .eq('device_id', escDevice.id)
-        .order('recorded_at', { ascending: false })
+        .order('id', { ascending: false })
         .limit(1);
       
       if (escTelemetries && escTelemetries.length > 0) {
@@ -224,7 +226,13 @@ export async function GET(req: NextRequest) {
       isLive: true
     };
 
-    return NextResponse.json(summary);
+    return NextResponse.json(summary, {
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+        'CDN-Cache-Control': 'no-store',
+        'Vercel-CDN-Cache-Control': 'no-store'
+      }
+    });
   } catch (error: any) {
     console.error('Error obteniendo resumen de dashboard:', error);
     return NextResponse.json(

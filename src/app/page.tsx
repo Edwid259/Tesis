@@ -56,8 +56,8 @@ export default function DashboardPage() {
     if (!isBackground) setIsLoading(true);
 
     try {
-      // 1. Obtener Resumen General
-      const summaryRes = await fetch('/api/dashboard/summary', { cache: 'no-store' });
+      // 1. Obtener Resumen General (con cache-buster para evitar respuestas cacheadas por CDN o navegador)
+      const summaryRes = await fetch(`/api/dashboard/summary?_t=${Date.now()}`, { cache: 'no-store' });
       if (summaryRes.ok) {
         const summaryData: DashboardSummaryResponse = await summaryRes.json();
         setSummary(summaryData);
