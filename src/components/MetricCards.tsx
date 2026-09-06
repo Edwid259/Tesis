@@ -13,30 +13,37 @@ import {
   CheckCircle2,
   AlertOctagon
 } from 'lucide-react';
-import { SensorReading, MotorTelemetry, SystemThresholds } from '@/types';
+import { SensorReading, MotorTelemetry, SystemThresholds, Device } from '@/types';
 
 interface MetricCardsProps {
   reading: SensorReading | null;
   motor: MotorTelemetry | null;
   thresholds: SystemThresholds;
   lastUpdated: string;
+  motorDevice?: Device | null;
+  sensorDevice?: Device | null;
 }
 
 export const MetricCards: React.FC<MetricCardsProps> = ({
   reading,
   motor,
   thresholds,
-  lastUpdated
+  lastUpdated,
+  motorDevice,
+  sensorDevice
 }) => {
+  const isSensorOnline = sensorDevice?.status === 'online';
+  const isMotorOnline = motorDevice?.status === 'online';
+
   const doVal = reading?.dissolved_oxygen_mg_l ?? 0;
   const satVal = reading?.oxygen_saturation_pct ?? 0;
   const tempVal = reading?.water_temperature_c ?? 0;
   const batteryV = reading?.battery_v ?? 0;
 
-  const isMotorOn = motor?.is_on ?? false;
-  const motorSpeed = motor?.speed_percent ?? 0;
-  const motorPwm = motor?.pwm_us ?? 1500;
-  const motorPower = motor?.power_w ?? (motorSpeed > 0 ? (motorSpeed * 1.9).toFixed(1) : 0);
+  const isMotorOn = isMotorOnline && (motor?.is_on ?? false);
+  const motorSpeed = isMotorOnline ? (motor?.speed_percent ?? 0) : 0;
+  const motorPwm = isMotorOnline ? (motor?.pwm_us ?? 1500) : 1500;
+  const motorPower = isMotorOnline ? (motor?.power_w ?? (motorSpeed > 0 ? (motorSpeed * 1.9).toFixed(1) : 0)) : 0;
 
   // Semáforo de calidad de Oxígeno Disuelto
   let doStatus: 'optimal' | 'warning' | 'critical' = 'optimal';
@@ -44,7 +51,12 @@ export const MetricCards: React.FC<MetricCardsProps> = ({
   let doStatusText = 'Nivel Óptimo';
   let doIcon = <CheckCircle2 className="w-4 h-4 text-emerald-400" />;
 
-  if (doVal < thresholds.critical) {
+  if (!isSensorOnline) {
+    doStatus = 'warning';
+    doBadgeColor = 'text-amber-400 bg-amber-950/70 border-amber-800';
+    doStatusText = 'Sensor Offline';
+    doIcon = <AlertTriangle className="w-4 h-4 text-amber-400" />;
+  } else if (doVal < thresholds.critical) {
     doStatus = 'critical';
     doBadgeColor = 'text-rose-400 bg-rose-950/80 border-rose-800 animate-pulse';
     doStatusText = 'Nivel Crítico';
@@ -163,28 +175,30 @@ export const MetricCards: React.FC<MetricCardsProps> = ({
         </div>
       </div>
 
-      {/* 5. Estado del Aireador (Thruster) */}
+      {/* 5. Estado del Aireador (ODrive S1 Principal) */}
       <div className="glass-panel rounded-2xl p-4 flex flex-col justify-between">
         <div className="flex items-center justify-between text-slate-400">
           <span className="text-xs font-semibold uppercase tracking-wider">Estado Aireador</span>
-          <Fan className={`w-4 h-4 ${isMotorOn ? 'text-cyan-400 animate-spin' : 'text-slate-500'}`} />
+          <Fan className={`w-4 h-4 ${isMotorOn ? 'text-cyan-400 animate-spin' : isMotorOnline ? 'text-slate-400' : 'text-rose-500'}`} />
         </div>
         <div className="my-2">
           <span className={`inline-block px-2.5 py-1 rounded-lg text-sm font-bold tracking-wide ${
-            isMotorOn
+            !isMotorOnline
+              ? 'bg-rose-950/60 text-rose-300 border border-rose-800/80'
+              : isMotorOn
               ? 'bg-cyan-950 text-cyan-300 border border-cyan-800/80 shadow-[0_0_12px_rgba(6,182,212,0.3)]'
               : 'bg-slate-800 text-slate-400 border border-slate-700'
           }`}>
-            {isMotorOn ? 'ENCENDIDO' : 'APAGADO'}
+            {!isMotorOnline ? 'DESCONECTADO' : isMotorOn ? 'ENCENDIDO' : 'APAGADO'}
           </span>
-          <p className="text-[11px] text-slate-400 mt-1.5">Blue Robotics T200</p>
+          <p className="text-[11px] text-slate-400 mt-1.5">ODrive S1 (Principal)</p>
         </div>
         <div className="text-[10px] text-slate-500">
           Potencia: {motorPower} W
         </div>
       </div>
 
-      {/* 6. Velocidad Actual Motor & PWM */}
+      {/* 6. Velocidad Actual Motor & RPM */}
       <div className="glass-panel rounded-2xl p-4 flex flex-col justify-between">
         <div className="flex items-center justify-between text-slate-400">
           <span className="text-xs font-semibold uppercase tracking-wider">Velocidad Motor</span>
@@ -198,11 +212,11 @@ export const MetricCards: React.FC<MetricCardsProps> = ({
             <span className="text-sm text-slate-400">%</span>
           </div>
           <p className="text-[11px] text-blue-400/80 mt-0.5">
-            PWM: {motorPwm} µs
+            {isMotorOnline ? `RPM: ${Math.round((motorSpeed / 100) * 3500)}` : 'Sin conexión'}
           </p>
         </div>
         <div className="text-[10px] text-slate-500">
-          {motor?.voltage_v ? `${motor.voltage_v}V / ${motor.current_a ?? 0}A` : 'Régimen normal'}
+          {!isMotorOnline ? 'ODrive S1 apagado' : motor?.voltage_v ? `${motor.voltage_v}V / ${motor.current_a ?? 0}A` : 'Régimen normal'}
         </div>
       </div>
     </div>

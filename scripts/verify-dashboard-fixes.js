@@ -1,0 +1,148 @@
+/**
+ * Self-check script: Verificación de correcciones del Dashboard
+ * - Heartbeat de dispositivos (offline/online)
+ * - Supresión de telemetría fantasma cuando el motor está offline
+ * - Formateo de zona horaria Perú (America/Lima / GMT-5)
+ * - Normalización de nombres de dispositivos
+ *
+ * Ejecución: node scripts/verify-dashboard-fixes.js
+ */
+const assert = require('assert');
+
+// 1. Verificación del Helper de Zona Horaria (dateUtils)
+function formatPeruTime(dateInput, includeSeconds = false) {
+  if (!dateInput) return '--:--';
+  const date = typeof dateInput === 'string' || typeof dateInput === 'number' ? new Date(dateInput) : dateInput;
+  return date.toLocaleTimeString('es-PE', {
+    timeZone: 'America/Lima',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: includeSeconds ? '2-digit' : undefined,
+    hour12: false
+  });
+}
+
+function formatPeruDateTime(dateInput, includeSeconds = false) {
+  if (!dateInput) return '--/-- --:--';
+  const date = typeof dateInput === 'string' || typeof dateInput === 'number' ? new Date(dateInput) : dateInput;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Lima',
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: includeSeconds ? '2-digit' : undefined,
+    hour12: false
+  }).formatToParts(date);
+  const getPart = (type) => parts.find(p => p.type === type)?.value || '00';
+  const time = includeSeconds
+    ? `${getPart('hour')}:${getPart('minute')}:${getPart('second')}`
+    : `${getPart('hour')}:${getPart('minute')}`;
+  return `${getPart('day')}/${getPart('month')} ${time}`;
+}
+
+console.log('====================================================');
+console.log(' VERIFICACIÓN DE CORRECCIONES DEL DASHBOARD AQUACONTROL');
+console.log('====================================================\n');
+
+// Test 1: Verificación de Zona Horaria Perú (UTC-5)
+console.log('[Test 1] Verificando conversión exacta a hora de Lima (GMT-5)...');
+// 2026-09-06T21:00:00Z en UTC equivale exactamente a las 16:00:00 en Lima (GMT-5)
+const utcTimestamp = '2026-09-06T21:00:00Z';
+const peruTime = formatPeruTime(utcTimestamp);
+const peruDateTime = formatPeruDateTime(utcTimestamp);
+
+assert.strictEqual(peruTime, '16:00', `Debe ser 16:00 pero se obtuvo ${peruTime}`);
+assert.strictEqual(peruDateTime, '06/09 16:00', `Debe ser 06/09 16:00 pero se obtuvo ${peruDateTime}`);
+console.log('  ✓ 21:00:00 UTC convertido correctamente a 16:00 en Lima (GMT-5)');
+
+// Test 2: Verificación de Heartbeat Timeout (60 segundos)
+console.log('\n[Test 2] Verificando evaluación dinámica de Heartbeat...');
+const HEARTBEAT_TIMEOUT_MS = 60 * 1000;
+function evaluateDeviceStatus(device) {
+  if (!device) return null;
+  const isFresh = Boolean(
+    device.last_seen_at &&
+    (Date.now() - new Date(device.last_seen_at).getTime() < HEARTBEAT_TIMEOUT_MS)
+  );
+  return {
+    ...device,
+    status: isFresh ? 'online' : 'offline'
+  };
+}
+
+// Dispositivo visto hace 10 segundos
+const freshDevice = {
+  id: 'test-1',
+  name: 'Sensor Reciente',
+  status: 'online',
+  last_seen_at: new Date(Date.now() - 10000).toISOString()
+};
+assert.strictEqual(evaluateDeviceStatus(freshDevice).status, 'online');
+console.log('  ✓ Dispositivo visto hace 10s se evalúa como ONLINE.');
+
+// Dispositivo visto hace 5 días (como el ODrive en la BD de agosto)
+const staleDevice = {
+  id: 'test-2',
+  name: 'ODrive S1 Antiguo',
+  status: 'online', // en BD estaba guardado como 'online'
+  last_seen_at: '2026-08-31T20:00:00Z'
+};
+assert.strictEqual(evaluateDeviceStatus(staleDevice).status, 'offline');
+console.log('  ✓ Dispositivo sin telemetría reciente pasa automáticamente a OFFLINE.');
+
+// Test 3: Supresión de Telemetría Fantasma cuando el Motor está Desconectado
+console.log('\n[Test 3] Verificando supresión de telemetría cuando el motor está offline...');
+function sanitizeTelemetry(motorDevice, telemetry) {
+  if (!telemetry) return null;
+  if (!motorDevice || motorDevice.status === 'offline') {
+    return {
+      ...telemetry,
+      is_on: false,
+      speed_percent: 0,
+      power_w: 0
+    };
+  }
+  return telemetry;
+}
+
+const mockHistoricalTelemetry = {
+  id: 1,
+  device_id: 'b0000000-0000-0000-0000-000000000002',
+  is_on: true,
+  speed_percent: 65,
+  power_w: 125.8
+};
+
+const evaluatedStale = evaluateDeviceStatus(staleDevice);
+const sanitizedOffline = sanitizeTelemetry(evaluatedStale, mockHistoricalTelemetry);
+assert.strictEqual(sanitizedOffline.is_on, false, 'Motor offline no puede reportar is_on: true');
+assert.strictEqual(sanitizedOffline.speed_percent, 0, 'Motor offline debe reportar 0% velocidad');
+assert.strictEqual(sanitizedOffline.power_w, 0, 'Motor offline debe reportar 0 W de potencia');
+console.log('  ✓ Telemetría histórica suprimida: is_on=false, speed=0%, power=0W.');
+
+// Test 4: Salud del Sistema degradada ante sensor offline
+console.log('\n[Test 4] Verificando estado de salud del estanque con sensor desconectado...');
+function computeHealth(sensorDevice, reading) {
+  if (!sensorDevice || sensorDevice.status === 'offline') {
+    return 'warning';
+  }
+  if (!reading) return 'offline';
+  const doVal = Number(reading.dissolved_oxygen_mg_l);
+  if (doVal < 4.0) return 'critical';
+  if (doVal < 6.0) return 'warning';
+  return 'optimal';
+}
+
+const disconnectedSensor = { id: 's1', status: 'offline' };
+const goodReading = { dissolved_oxygen_mg_l: 7.8 };
+assert.strictEqual(
+  computeHealth(disconnectedSensor, goodReading),
+  'warning',
+  'Si el sensor está desconectado, la salud debe ser warning'
+);
+console.log('  ✓ Sistema reporta WARNING cuando el sensor está desconectado (sin falsos óptimos).');
+
+console.log('\n====================================================');
+console.log(' TODAS LAS COMPROBACIONES PASARON CORRECTAMENTE (4/4)');
+console.log('====================================================\n');

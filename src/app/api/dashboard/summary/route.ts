@@ -9,9 +9,24 @@ import {
   getDemoLatestEscTelemetry,
   demoThresholds
 } from '@/lib/demoData';
-import { DashboardSummaryResponse } from '@/types';
+import { DashboardSummaryResponse, Device } from '@/types';
 
 export const dynamic = 'force-dynamic';
+
+const HEARTBEAT_TIMEOUT_MS = 60 * 1000; // 60 segundos sin telemetría -> offline
+
+function evaluateDeviceStatus(device: Device | null): Device | null {
+  if (!device) return null;
+  const isFresh = Boolean(
+    device.last_seen_at &&
+    (Date.now() - new Date(device.last_seen_at).getTime() < HEARTBEAT_TIMEOUT_MS)
+  );
+
+  return {
+    ...device,
+    status: isFresh ? 'online' : 'offline'
+  };
+}
 
 /**
  * Devuelve el estado general del sistema, última medición de OD, estado de motor y alertas
@@ -35,24 +50,56 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(summary);
     }
 
-    // 1. Obtener dispositivos
-    const { data: devices } = await supabaseAdmin
+    // 1. Obtener dispositivos desde Supabase
+    const { data: rawDevices } = await supabaseAdmin
       .from('devices')
       .select('*');
 
-    const sensorDevice = devices?.find(d => d.type === 'sensor_do') || null;
-    
+    // Sensor de Oxígeno Disuelto
+    const rawSensor = rawDevices?.find(d => d.type === 'sensor_do') || null;
+    const sensorDevice = evaluateDeviceStatus(rawSensor);
+
     // Actuador Principal: ODrive S1 (M8325s)
-    const motorDevice = devices?.find(d => 
+    let rawMotor = rawDevices?.find(d => 
       d.id === 'b0000000-0000-0000-0000-000000000002' || 
       (d.type === 'motor_thruster' && (d.metadata?.controller_model === 'ODrive S1' || d.name?.includes('ODrive')))
-    ) || devices?.find(d => d.type === 'motor_thruster') || null;
+    ) || rawDevices?.find(d => d.type === 'motor_thruster') || null;
 
-    // Actuador Auxiliar: T-200 con ESC
-    const escDevice = devices?.find(d => 
+    if (rawMotor) {
+      // Normalizar nombre oficial de ODrive S1 si la BD aún tenía nombre legacy
+      rawMotor = {
+        ...rawMotor,
+        name: 'Controlador ODrive S1 - Estanque 1',
+        metadata: {
+          ...rawMotor.metadata,
+          controller_model: 'ODrive S1',
+          motor: 'M8325s',
+          interface: 'UART ASCII'
+        }
+      };
+    }
+    const motorDevice = evaluateDeviceStatus(rawMotor);
+
+    // Actuador Auxiliar: Blue Robotics T-200 con ESC
+    let rawEsc = rawDevices?.find(d => 
       d.id === 'c0000000-0000-0000-0000-000000000003' || 
-      (d.type === 'motor_thruster' && d.id !== motorDevice?.id)
+      (d.type === 'motor_thruster' && d.id !== rawMotor?.id)
     ) || null;
+
+    if (!rawEsc) {
+      // Fallback predeterminado para el actuador auxiliar en caso de no haberse sincronizado aún
+      rawEsc = {
+        id: 'c0000000-0000-0000-0000-000000000003',
+        name: 'Aireador Auxiliar ESC (Banco de Pruebas)',
+        type: 'motor_thruster',
+        location: 'Laboratorio / Banco de Pruebas',
+        status: 'offline',
+        last_seen_at: null,
+        metadata: { controller_model: 'ESP32-S3 ESC PWM', motor: 'Blue Robotics T200' },
+        created_at: new Date().toISOString()
+      };
+    }
+    const escDevice = evaluateDeviceStatus(rawEsc);
 
     // 2. Obtener última lectura de sensor
     let latestSensorReading = null;
@@ -80,7 +127,18 @@ export async function GET(req: NextRequest) {
         .limit(1);
       
       if (telemetries && telemetries.length > 0) {
-        latestMotorTelemetry = telemetries[0];
+        const telem = telemetries[0];
+        // Si el motor está desconectado físicamente, la telemetría en tiempo real no puede estar encendida
+        if (motorDevice.status === 'offline') {
+          latestMotorTelemetry = {
+            ...telem,
+            is_on: false,
+            speed_percent: 0,
+            power_w: 0
+          };
+        } else {
+          latestMotorTelemetry = telem;
+        }
       }
     }
 
@@ -95,7 +153,17 @@ export async function GET(req: NextRequest) {
         .limit(1);
       
       if (escTelemetries && escTelemetries.length > 0) {
-        latestEscTelemetry = escTelemetries[0];
+        const escTelem = escTelemetries[0];
+        if (escDevice.status === 'offline') {
+          latestEscTelemetry = {
+            ...escTelem,
+            is_on: false,
+            speed_percent: 0,
+            power_w: 0
+          };
+        } else {
+          latestEscTelemetry = escTelem;
+        }
       }
     }
 
@@ -107,7 +175,9 @@ export async function GET(req: NextRequest) {
 
     // 6. Determinar salud general del sistema
     let systemHealth: 'optimal' | 'warning' | 'critical' | 'offline' = 'optimal';
-    if (latestSensorReading) {
+    if (!sensorDevice || sensorDevice.status === 'offline') {
+      systemHealth = 'warning'; // Sensor fuera de línea
+    } else if (latestSensorReading) {
       const doVal = Number(latestSensorReading.dissolved_oxygen_mg_l);
       if (doVal < demoThresholds.critical) {
         systemHealth = 'critical';
@@ -140,3 +210,4 @@ export async function GET(req: NextRequest) {
     );
   }
 }
+

@@ -48,13 +48,17 @@ export const MotorControlPanel: React.FC<MotorControlPanelProps> = ({
 
   // Sincronizar si cambia telemetría externa y no estamos editando activamente
   useEffect(() => {
+    if (!isDeviceOnline) {
+      setIsOn(false);
+      return;
+    }
     if (currentTelemetry && !isSending) {
       setIsOn(currentTelemetry.is_on);
       if (currentTelemetry.speed_percent > 0 && controlMode === 'manual') {
         setTargetSpeed(currentTelemetry.speed_percent);
       }
     }
-  }, [currentTelemetry, controlMode]);
+  }, [currentTelemetry, controlMode, isDeviceOnline, isSending]);
 
   // Cálculo de RPM estimadas (100% velocidad equivale a 3500 RPM)
   const estimatedRpm = controlMode === 'manual' 
