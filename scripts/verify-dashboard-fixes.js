@@ -141,8 +141,35 @@ assert.strictEqual(
   'warning',
   'Si el sensor está desconectado, la salud debe ser warning'
 );
-console.log('  ✓ Sistema reporta WARNING cuando el sensor está desconectado (sin falsos óptimos).');
+// Test 5: Heartbeat del sensor derivado en tiempo real desde la última lectura
+console.log('\n[Test 5] Verificando heartbeat del sensor derivado de latestSensorReading...');
+function resolveSensorWithHeartbeat(rawDevice, latestReading) {
+  const sensorLastSeen = latestReading?.recorded_at
+    ? (rawDevice?.last_seen_at && new Date(rawDevice.last_seen_at).getTime() > new Date(latestReading.recorded_at).getTime()
+        ? rawDevice.last_seen_at
+        : latestReading.recorded_at)
+    : rawDevice?.last_seen_at;
+
+  return evaluateDeviceStatus({
+    ...(rawDevice || { id: 'fallback', name: 'Sensor OD', type: 'sensor_do' }),
+    last_seen_at: sensorLastSeen
+  });
+}
+
+// Dispositivo en BD desfasado (antiguo), pero lectura llegando en tiempo real hace 5 segundos
+const staleDbSensor = { id: 'sensor-1', name: 'Sensor OD', type: 'sensor_do', last_seen_at: '2026-08-31T20:00:00Z' };
+const activeTelemetryReading = { id: 99, recorded_at: new Date(Date.now() - 5000).toISOString(), dissolved_oxygen_mg_l: 8.5 };
+
+const resolvedActiveSensor = resolveSensorWithHeartbeat(staleDbSensor, activeTelemetryReading);
+assert.strictEqual(resolvedActiveSensor.status, 'online', 'Sensor debe reconocerse ONLINE cuando hay telemetría activa');
+console.log('  ✓ Sensor se evalúa ONLINE aun si la fila en devices estaba desfasada.');
+
+// Telemetría que dejó de llegar hace 5 minutos -> pasa a OFFLINE
+const stoppedTelemetryReading = { id: 100, recorded_at: new Date(Date.now() - 300000).toISOString(), dissolved_oxygen_mg_l: 8.5 };
+const resolvedStoppedSensor = resolveSensorWithHeartbeat(staleDbSensor, stoppedTelemetryReading);
+assert.strictEqual(resolvedStoppedSensor.status, 'offline', 'Sensor debe pasar a OFFLINE cuando la telemetría se detiene');
+console.log('  ✓ Sensor pasa a OFFLINE automáticamente al detenerse la telemetría.');
 
 console.log('\n====================================================');
-console.log(' TODAS LAS COMPROBACIONES PASARON CORRECTAMENTE (4/4)');
+console.log(' TODAS LAS COMPROBACIONES PASARON CORRECTAMENTE (5/5)');
 console.log('====================================================\n');

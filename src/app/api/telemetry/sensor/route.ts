@@ -97,6 +97,16 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      // Actualizar explícitamente estado y última conexión en devices
+      await supabaseAdmin
+        .from('devices')
+        .update({
+          status: 'online',
+          last_seen_at: recordedAt,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', device.id);
+
       // 5. Evaluar reglas de alerta automática si el OD es crítico o bajo
       if (dissolvedOxygenMgL < 4.0) {
         await supabaseAdmin.from('alerts').insert({

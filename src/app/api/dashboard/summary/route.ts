@@ -50,20 +50,54 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(summary);
     }
 
-    // 1. Obtener dispositivos desde Supabase
+    // 1. Obtener última lectura de sensor en tiempo real desde sensor_readings
+    const { data: latestReadings } = await supabaseAdmin
+      .from('sensor_readings')
+      .select('*')
+      .order('recorded_at', { ascending: false })
+      .limit(1);
+    const latestSensorReading = latestReadings && latestReadings.length > 0 ? latestReadings[0] : null;
+
+    // 2. Obtener dispositivos desde Supabase
     const { data: rawDevices } = await supabaseAdmin
       .from('devices')
       .select('*');
 
-    // Sensor de Oxígeno Disuelto
-    const rawSensor = rawDevices?.find(d => d.type === 'sensor_do') || null;
-    const sensorDevice = evaluateDeviceStatus(rawSensor);
+    // Sensor de Oxígeno Disuelto: vincular preferentemente por ID de la última lectura o por tipo
+    let rawSensor = (latestSensorReading?.device_id && rawDevices?.find(d => d.id === latestSensorReading.device_id))
+      || rawDevices?.find(d => d.type === 'sensor_do') 
+      || null;
+
+    if (!rawSensor) {
+      rawSensor = {
+        id: latestSensorReading?.device_id || 'a0000000-0000-0000-0000-000000000001',
+        name: 'Sensor Óptico OD - Estanque 1',
+        type: 'sensor_do',
+        location: 'Estanque Principal (Zona Norte)',
+        status: 'offline',
+        last_seen_at: latestSensorReading?.recorded_at || null,
+        metadata: { interface: 'Modbus RS485', sensor_model: 'Aqualabo DIGISENS' },
+        created_at: new Date().toISOString()
+      };
+    }
+
+    // El timestamp más reciente entre devices.last_seen_at y la última lectura real determina la conexión viva
+    const sensorLastSeen = latestSensorReading?.recorded_at
+      ? (rawSensor.last_seen_at && new Date(rawSensor.last_seen_at).getTime() > new Date(latestSensorReading.recorded_at).getTime()
+          ? rawSensor.last_seen_at
+          : latestSensorReading.recorded_at)
+      : rawSensor.last_seen_at;
+
+    const sensorDevice = evaluateDeviceStatus({
+      ...rawSensor,
+      last_seen_at: sensorLastSeen
+    });
 
     // Actuador Principal: ODrive S1 (M8325s)
     let rawMotor = rawDevices?.find(d => 
       d.id === 'b0000000-0000-0000-0000-000000000002' || 
       (d.type === 'motor_thruster' && (d.metadata?.controller_model === 'ODrive S1' || d.name?.includes('ODrive')))
-    ) || rawDevices?.find(d => d.type === 'motor_thruster') || null;
+    ) || rawDevices?.find(d => d.type === 'motor_thruster' && d.id !== rawSensor?.id) || null;
 
     if (rawMotor) {
       // Normalizar nombre oficial de ODrive S1 si la BD aún tenía nombre legacy
@@ -78,7 +112,38 @@ export async function GET(req: NextRequest) {
         }
       };
     }
-    const motorDevice = evaluateDeviceStatus(rawMotor);
+
+    // 3. Obtener última telemetría de ODrive S1
+    let latestMotorTelemetry = null;
+    if (rawMotor) {
+      const { data: telemetries } = await supabaseAdmin
+        .from('motor_telemetry')
+        .select('*')
+        .eq('device_id', rawMotor.id)
+        .order('recorded_at', { ascending: false })
+        .limit(1);
+      
+      if (telemetries && telemetries.length > 0) {
+        latestMotorTelemetry = telemetries[0];
+      }
+    }
+
+    const motorLastSeen = latestMotorTelemetry?.recorded_at
+      ? (rawMotor?.last_seen_at && new Date(rawMotor.last_seen_at).getTime() > new Date(latestMotorTelemetry.recorded_at).getTime()
+          ? rawMotor.last_seen_at
+          : latestMotorTelemetry.recorded_at)
+      : rawMotor?.last_seen_at;
+
+    const motorDevice = evaluateDeviceStatus(rawMotor ? { ...rawMotor, last_seen_at: motorLastSeen } : null);
+
+    if (latestMotorTelemetry && motorDevice?.status === 'offline') {
+      latestMotorTelemetry = {
+        ...latestMotorTelemetry,
+        is_on: false,
+        speed_percent: 0,
+        power_w: 0
+      };
+    }
 
     // Actuador Auxiliar: Blue Robotics T-200 con ESC
     let rawEsc = rawDevices?.find(d => 
@@ -87,7 +152,6 @@ export async function GET(req: NextRequest) {
     ) || null;
 
     if (!rawEsc) {
-      // Fallback predeterminado para el actuador auxiliar en caso de no haberse sincronizado aún
       rawEsc = {
         id: 'c0000000-0000-0000-0000-000000000003',
         name: 'Aireador Auxiliar ESC (Banco de Pruebas)',
@@ -100,47 +164,6 @@ export async function GET(req: NextRequest) {
       };
     }
     const escDevice = evaluateDeviceStatus(rawEsc);
-
-    // 2. Obtener última lectura de sensor
-    let latestSensorReading = null;
-    if (sensorDevice) {
-      const { data: readings } = await supabaseAdmin
-        .from('sensor_readings')
-        .select('*')
-        .eq('device_id', sensorDevice.id)
-        .order('recorded_at', { ascending: false })
-        .limit(1);
-      
-      if (readings && readings.length > 0) {
-        latestSensorReading = readings[0];
-      }
-    }
-
-    // 3. Obtener última telemetría de ODrive S1
-    let latestMotorTelemetry = null;
-    if (motorDevice) {
-      const { data: telemetries } = await supabaseAdmin
-        .from('motor_telemetry')
-        .select('*')
-        .eq('device_id', motorDevice.id)
-        .order('recorded_at', { ascending: false })
-        .limit(1);
-      
-      if (telemetries && telemetries.length > 0) {
-        const telem = telemetries[0];
-        // Si el motor está desconectado físicamente, la telemetría en tiempo real no puede estar encendida
-        if (motorDevice.status === 'offline') {
-          latestMotorTelemetry = {
-            ...telem,
-            is_on: false,
-            speed_percent: 0,
-            power_w: 0
-          };
-        } else {
-          latestMotorTelemetry = telem;
-        }
-      }
-    }
 
     // 4. Obtener última telemetría de ESC Auxiliar (T-200)
     let latestEscTelemetry = null;
