@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
 
     if (error) {
       console.error('Error creando comando de control:', error);
-      return NextResponse.json({ error: 'Error al enviar orden al dispositivo' }, { status: 500 });
+      return NextResponse.json({ error: 'Error al enviar orden al dispositivo', details: error.message || error, code: error.code, hint: error.hint }, { status: 500 });
     }
 
     // Registrar evento de motor
