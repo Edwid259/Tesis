@@ -17,8 +17,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Calcular PWM estimado para Blue Robotics T200 (ESC Basic):
-    // 0%  -> 1500 µs (Neutro / Detenido)
-    // 100% -> 1900 µs (Máximo Avance)
+    // 0%  -> 1500 us (Neutro / Detenido)
+    // 100% -> 1900 us (Maximo Avance)
     let speed = Math.max(0, Math.min(100, Number(speed_percent)));
     if (command_type === 'stop' || command_type === 'emergency_stop') {
       speed = 0;
@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
     if (!isSupabaseConfigured()) {
       return NextResponse.json({
         success: true,
-        message: 'Comando registrado con éxito (Modo Demo Local)',
+        message: 'Comando registrado con exito (Modo Demo Local)',
         command: {
           id: 'demo-cmd-' + Date.now(),
           device_id: device_id || 'b0000000-0000-0000-0000-000000000002',
@@ -55,43 +55,74 @@ export async function POST(req: NextRequest) {
       if (motorDev && motorDev.length > 0) {
         targetDeviceId = motorDev[0].id;
       } else {
-        return NextResponse.json({ error: 'No se encontró un dispositivo de motor registrado' }, { status: 404 });
+        return NextResponse.json({ error: 'No se encontro un dispositivo de motor registrado' }, { status: 404 });
       }
     }
 
-    // Insertar comando en la cola
-    const { data: cmd, error } = await supabaseAdmin
+    // Insertar comando en la cola de control_commands
+    // Nota de robustez: Si la tabla en Supabase no tiene la columna 'payload', omitirla transparentemente
+    const baseCommand = {
+      device_id: targetDeviceId,
+      command_type,
+      speed_percent: speed,
+      pwm_us,
+      status: 'pending',
+      requested_by
+    };
+
+    let cmd: any = null;
+    let error: any = null;
+
+    const resWithPayload = await supabaseAdmin
       .from('control_commands')
-      .insert({
-        device_id: targetDeviceId,
-        command_type,
-        speed_percent: speed,
-        pwm_us,
-        payload,
-        status: 'pending',
-        requested_by
-      })
+      .insert({ ...baseCommand, payload })
       .select()
       .single();
 
-    if (error) {
-      console.error('Error creando comando de control:', error);
-      return NextResponse.json({ error: 'Error al enviar orden al dispositivo', details: error.message || error, code: error.code, hint: error.hint }, { status: 500 });
+    if (resWithPayload.error && (resWithPayload.error.code === 'PGRST204' || resWithPayload.error.message?.includes('payload'))) {
+      // Reintentar sin columna payload
+      const resWithoutPayload = await supabaseAdmin
+        .from('control_commands')
+        .insert(baseCommand)
+        .select()
+        .single();
+      cmd = resWithoutPayload.data;
+      error = resWithoutPayload.error;
+    } else {
+      cmd = resWithPayload.data;
+      error = resWithPayload.error;
     }
 
-    // Registrar evento de motor
-    await supabaseAdmin.from('motor_events').insert({
-      device_id: targetDeviceId,
-      event_type: command_type === 'stop' ? 'stop' : (command_type === 'start' ? 'start' : 'speed_change'),
-      speed_percent: speed,
-      pwm_us,
-      source: 'manual',
-      notes: `Comando '${command_type}' enviado desde la dashboard web (${speed}% / ${pwm_us}µs)`
-    });
+    if (error) {
+      console.error('Error creando comando de control:', error);
+      return NextResponse.json(
+        {
+          error: 'Error al enviar orden al dispositivo',
+          details: error.message || error,
+          code: error.code,
+          hint: error.hint
+        },
+        { status: 500 }
+      );
+    }
+
+    // Registrar evento de motor de forma no-bloqueante (fail-safe)
+    try {
+      await supabaseAdmin.from('motor_events').insert({
+        device_id: targetDeviceId,
+        event_type: command_type === 'stop' ? 'stop' : (command_type === 'start' ? 'start' : 'speed_change'),
+        speed_percent: speed,
+        pwm_us,
+        source: 'manual',
+        notes: `Comando '${command_type}' enviado desde la dashboard web (${speed}% / ${pwm_us}us)`
+      });
+    } catch (eventErr) {
+      console.warn('Advertencia registrando evento de motor:', eventErr);
+    }
 
     return NextResponse.json({
       success: true,
-      message: 'Comando emitido exitosamente. En espera de confirmación por el ESP32.',
+      message: 'Comando emitido exitosamente. En espera de confirmacion por el ESP32.',
       command: cmd
     });
 
