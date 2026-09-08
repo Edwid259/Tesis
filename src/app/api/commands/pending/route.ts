@@ -51,20 +51,9 @@ export async function GET(req: NextRequest) {
     }
 
     if (!commands || commands.length === 0) {
-      // Diagnostico: adjuntar los ultimos comandos en la tabla
-      const { data: recentCmds } = await supabaseAdmin
-        .from('control_commands')
-        .select('id, device_id, status, command_type, created_at')
-        .order('created_at', { ascending: false })
-        .limit(5);
-
       return NextResponse.json({
         has_command: false,
-        command: null,
-        debug: {
-          authenticated_device_id: device.id,
-          recent_commands: recentCmds || []
-        }
+        command: null
       });
     }
 
@@ -86,24 +75,14 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       has_command: true,
-      diagnostic: {
-        has_service_role: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
-        update_error: updateRes.error,
-        update_count: updateRes.count,
-        updated_data: updateRes.data
-      },
       command: {
         id: command.id,
-        device_id: command.device_id,
-        status: command.status,
         command_type: command.command_type,
         speed_percent: Number(command.speed_percent),
         pwm_us: command.pwm_us,
         payload: command.payload || {},
         created_at: command.created_at
-      },
-      update_error: updateRes.error || null,
-      update_count: updateRes.count || null
+      }
     });
 
   } catch (error: any) {
