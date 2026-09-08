@@ -69,24 +69,32 @@ export async function GET(req: NextRequest) {
     const command = commands[0];
 
     // Marcar como 'sent' para evitar envios duplicados
-    await supabaseAdmin
+    const updateRes = await supabaseAdmin
       .from('control_commands')
       .update({
         status: 'sent',
         sent_at: new Date().toISOString()
       })
       .eq('id', command.id);
+    
+    if (updateRes.error) {
+      console.error('Error al actualizar status a sent:', updateRes.error);
+    }
 
     return NextResponse.json({
       has_command: true,
       command: {
         id: command.id,
+        device_id: command.device_id,
+        status: command.status,
         command_type: command.command_type,
         speed_percent: Number(command.speed_percent),
         pwm_us: command.pwm_us,
         payload: command.payload || {},
         created_at: command.created_at
-      }
+      },
+      update_error: updateRes.error || null,
+      update_count: updateRes.count || null
     });
 
   } catch (error: any) {
