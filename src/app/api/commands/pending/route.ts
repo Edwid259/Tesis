@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
       .select('*')
       .eq('device_id', device.id)
       .eq('status', 'pending')
-      .order('created_at', { ascending: true })
+      .order('created_at', { ascending: false })
       .limit(1);
 
     // 2. Si no encontro con device_id exacto, buscar cualquier comando pendiente global para motor
@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
         .from('control_commands')
         .select('*')
         .eq('status', 'pending')
-        .order('created_at', { ascending: true })
+        .order('created_at', { ascending: false })
         .limit(1);
 
       if (fallbackQuery.data && fallbackQuery.data.length > 0) {
@@ -76,8 +76,9 @@ export async function GET(req: NextRequest) {
       .update({
         status: 'sent',
         sent_at: new Date().toISOString()
-      })
-      .eq('id', command.id);
+      }, { count: 'exact' })
+      .eq('id', command.id)
+      .select();
     
     if (updateRes.error) {
       console.error('Error al actualizar status a sent:', updateRes.error);
@@ -85,6 +86,12 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       has_command: true,
+      diagnostic: {
+        has_service_role: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
+        update_error: updateRes.error,
+        update_count: updateRes.count,
+        updated_data: updateRes.data
+      },
       command: {
         id: command.id,
         device_id: command.device_id,
