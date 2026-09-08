@@ -82,7 +82,7 @@ function resolveKnownDevice(deviceKey: string): Device | null {
  * Autentica una petición de un dispositivo IoT (ESP32) mediante la cabecera X-Device-Key
  */
 export async function authenticateDevice(req: NextRequest, expectedType?: string): Promise<{ device: Device | null; errorResponse: NextResponse | null }> {
-  const deviceKey = req.headers.get('x-device-key') || req.headers.get('X-Device-Key');
+  const deviceKey = req.headers.get('x-device-key') || req.headers.get('X-Device-Key') || req.nextUrl?.searchParams?.get('device_key') || null;
 
   if (!deviceKey) {
     return {

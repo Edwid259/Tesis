@@ -3,6 +3,8 @@ import { authenticateDevice } from '@/lib/deviceAuth';
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+export const fetchCache = 'force-no-store';
 
 /**
  * Permite que el ESP32 del Thruster consulte comandos de control pendientes (polling HTTP/HTTPS)
