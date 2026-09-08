@@ -20,8 +20,8 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Buscar comando pendiente más antiguo
-    const { data: commands, error } = await supabaseAdmin
+    // 1. Buscar comando pendiente para este dispositivo especifico
+    let { data: commands, error } = await supabaseAdmin
       .from('control_commands')
       .select('*')
       .eq('device_id', device.id)
@@ -29,21 +29,46 @@ export async function GET(req: NextRequest) {
       .order('created_at', { ascending: true })
       .limit(1);
 
+    // 2. Si no encontro con device_id exacto, buscar cualquier comando pendiente global para motor
+    if (!commands || commands.length === 0) {
+      const fallbackQuery = await supabaseAdmin
+        .from('control_commands')
+        .select('*')
+        .eq('status', 'pending')
+        .order('created_at', { ascending: true })
+        .limit(1);
+
+      if (fallbackQuery.data && fallbackQuery.data.length > 0) {
+        commands = fallbackQuery.data;
+      }
+    }
+
     if (error) {
       console.error('Error buscando comandos pendientes:', error);
-      return NextResponse.json({ error: 'Error al consultar órdenes' }, { status: 500 });
+      return NextResponse.json({ error: 'Error al consultar ordenes', details: error.message }, { status: 500 });
     }
 
     if (!commands || commands.length === 0) {
+      // Diagnostico: adjuntar los ultimos comandos en la tabla
+      const { data: recentCmds } = await supabaseAdmin
+        .from('control_commands')
+        .select('id, device_id, status, command_type, created_at')
+        .order('created_at', { ascending: false })
+        .limit(5);
+
       return NextResponse.json({
         has_command: false,
-        command: null
+        command: null,
+        debug: {
+          authenticated_device_id: device.id,
+          recent_commands: recentCmds || []
+        }
       });
     }
 
     const command = commands[0];
 
-    // Marcar como 'sent' para evitar envíos duplicados
+    // Marcar como 'sent' para evitar envios duplicados
     await supabaseAdmin
       .from('control_commands')
       .update({

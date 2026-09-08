@@ -46,19 +46,24 @@ export const MotorControlPanel: React.FC<MotorControlPanelProps> = ({
     };
   }, []);
 
-  // Sincronizar si cambia telemetría externa y no estamos editando activamente
+  // Sincronizar solo al montar inicialmente para no pisar el mando manual del operador
+  const isInitializedRef = React.useRef<boolean>(false);
+  useEffect(() => {
+    if (!isInitializedRef.current && currentTelemetry) {
+      setIsOn(currentTelemetry.is_on);
+      if (currentTelemetry.speed_percent > 0) {
+        setTargetSpeed(currentTelemetry.speed_percent);
+      }
+      isInitializedRef.current = true;
+    }
+  }, [currentTelemetry]);
+
+  // Si el dispositivo cae offline, deshabilitar interruptor de proteccion
   useEffect(() => {
     if (!isDeviceOnline) {
       setIsOn(false);
-      return;
     }
-    if (currentTelemetry && !isSending) {
-      setIsOn(currentTelemetry.is_on);
-      if (currentTelemetry.speed_percent > 0 && controlMode === 'manual') {
-        setTargetSpeed(currentTelemetry.speed_percent);
-      }
-    }
-  }, [currentTelemetry, controlMode, isDeviceOnline, isSending]);
+  }, [isDeviceOnline]);
 
   // Cálculo de RPM estimadas (100% velocidad equivale a 3500 RPM)
   const estimatedRpm = controlMode === 'manual' 
