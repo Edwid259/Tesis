@@ -28,9 +28,9 @@ export const MotorControlPanel: React.FC<MotorControlPanelProps> = ({
   const [ki, setKi] = useState<number>(1.5);
   const [kd, setKd] = useState<number>(10.0);
 
-  // Estado del modo manual
-  const [isOn, setIsOn] = useState<boolean>(currentTelemetry?.is_on ?? false);
-  const [targetSpeed, setTargetSpeed] = useState<number>(currentTelemetry?.speed_percent ?? 50);
+  // Estado del modo manual (consigna del operador independiente de telemetria)
+  const [isOn, setIsOn] = useState<boolean>(false);
+  const [targetSpeed, setTargetSpeed] = useState<number>(25);
   const [isSending, setIsSending] = useState<boolean>(false);
   type FeedbackState = { type: 'success' | 'error' | null; message: string };
   const [feedback, setFeedback] = useState<FeedbackState>({
@@ -46,18 +46,6 @@ export const MotorControlPanel: React.FC<MotorControlPanelProps> = ({
     };
   }, []);
 
-  // Sincronizar solo al montar inicialmente para no pisar el mando manual del operador
-  const isInitializedRef = React.useRef<boolean>(false);
-  useEffect(() => {
-    if (!isInitializedRef.current && currentTelemetry) {
-      setIsOn(currentTelemetry.is_on);
-      if (currentTelemetry.speed_percent > 0) {
-        setTargetSpeed(currentTelemetry.speed_percent);
-      }
-      isInitializedRef.current = true;
-    }
-  }, [currentTelemetry]);
-
   // Si el dispositivo cae offline, deshabilitar interruptor de proteccion
   useEffect(() => {
     if (!isDeviceOnline) {
@@ -65,10 +53,8 @@ export const MotorControlPanel: React.FC<MotorControlPanelProps> = ({
     }
   }, [isDeviceOnline]);
 
-  // Cálculo de RPM estimadas (100% velocidad equivale a 3500 RPM)
-  const estimatedRpm = controlMode === 'manual' 
-    ? (!isOn ? 0 : Math.round((targetSpeed / 100) * 3500))
-    : Math.round(((currentTelemetry?.speed_percent ?? 0) / 100) * 3500);
+  // Cálculo de RPM de consigna para comando (0 a 3500 RPM)
+  const commandRpm = !isOn ? 0 : Math.round((targetSpeed / 100) * 3500);
 
   // Parada de Emergencia Inmediata
   const handleEmergencyStop = async () => {
@@ -156,7 +142,7 @@ export const MotorControlPanel: React.FC<MotorControlPanelProps> = ({
       setFeedback({
         type: 'success',
         message: controlMode === 'manual'
-          ? `¡Comando transmitido! Modo MANUAL: ${speed}% (${estimatedRpm} RPM)`
+          ? `¡Comando transmitido! Modo MANUAL: ${speed}% (${commandRpm} RPM)`
           : `¡Modo ${controlMode.toUpperCase()} activo! Consigna OD: ${targetDo} mg/L | Algoritmo local gobernando motor.`
       });
 
@@ -296,7 +282,7 @@ export const MotorControlPanel: React.FC<MotorControlPanelProps> = ({
                 <span>Acelerador Manual:</span>
               </label>
               <span className="text-sm font-bold text-amber-300 bg-amber-950/80 px-2 py-0.5 rounded border border-amber-800/60">
-                {isOn ? `${targetSpeed}% (${estimatedRpm} RPM)` : '0% (Inactivo)'}
+                {isOn ? `${targetSpeed}% (${commandRpm} RPM)` : '0% (Inactivo)'}
               </span>
             </div>
 
@@ -317,7 +303,7 @@ export const MotorControlPanel: React.FC<MotorControlPanelProps> = ({
 
             <div className="flex justify-between text-[11px] text-slate-400">
               <span>Rango FOC: <strong className="text-slate-400">0 – 3500 RPM</strong></span>
-              <span>Velocidad ODrive: <strong className="text-amber-400 font-bold">{estimatedRpm} RPM</strong></span>
+              <span>Consigna a Enviar: <strong className="text-amber-400 font-bold">{commandRpm} RPM ({isOn ? targetSpeed : 0}%)</strong></span>
             </div>
           </div>
 

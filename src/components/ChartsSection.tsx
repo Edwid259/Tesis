@@ -159,7 +159,7 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
               }`}
             >
               {showSpeed ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-              <span>Velocidad Thruster (%)</span>
+              <span>Velocidad Aireador (RPM)</span>
             </button>
 
             <button
@@ -210,14 +210,14 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                   tick={{ fontSize: 11 }}
                   unit=" mg/L"
                 />
-                {/* Eje Y Derecho para Velocidad de Motor */}
+                {/* Eje Y Derecho para Velocidad Aireador ODrive S1 (RPM) */}
                 <YAxis
                   yAxisId="right"
                   orientation="right"
                   stroke="#3b82f6"
-                  domain={[0, 100]}
+                  domain={[0, 3500]}
                   tick={{ fontSize: 11 }}
-                  unit="%"
+                  unit=" RPM"
                 />
                 
                 <Tooltip content={<CustomTooltip />} />
@@ -240,9 +240,9 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                   <Area
                     yAxisId="right"
                     type="monotone"
-                    dataKey="motor_speed_percent"
-                    name="Velocidad Aireador"
-                    unit="%"
+                    dataKey="odrive_rpm"
+                    name="Velocidad Aireador (ODrive S1)"
+                    unit=" RPM"
                     stroke="#3b82f6"
                     strokeWidth={2}
                     fillOpacity={1}
@@ -319,7 +319,7 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                 />
               </AreaChart>
             ) : (
-              // 3. GRÁFICA DE VELOCIDAD DE AIREADOR E INTERVALOS ACTIVOS
+              // 3. GRÁFICA DE VELOCIDAD DE AIREADOR ODRIVE S1 (M8325s) EN RPM
               <AreaChart data={history} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorMotorOnly" x1="0" y1="0" x2="0" y2="1">
@@ -329,14 +329,14 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" opacity={0.6} />
                 <XAxis dataKey="timeLabel" stroke="#64748b" tick={{ fontSize: 11 }} />
-                <YAxis stroke="#3b82f6" domain={[0, 100]} tick={{ fontSize: 11 }} unit="%" />
+                <YAxis stroke="#3b82f6" domain={[0, 3500]} tick={{ fontSize: 11 }} unit=" RPM" />
                 <Tooltip content={<CustomTooltip />} />
 
                 <Area
-                  type="stepAfter"
-                  dataKey="motor_speed_percent"
-                  name="Velocidad Thruster T200"
-                  unit="%"
+                  type="monotone"
+                  dataKey="odrive_rpm"
+                  name="Velocidad Aireador (ODrive S1)"
+                  unit=" RPM"
                   stroke="#3b82f6"
                   strokeWidth={2.5}
                   fillOpacity={1}

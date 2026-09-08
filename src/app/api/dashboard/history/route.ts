@@ -53,14 +53,17 @@ export async function GET(req: NextRequest) {
       .order('recorded_at', { ascending: true })
       .limit(500);
 
-    // Consultar telemetría de motor
-    const { data: motorData, error: motorErr } = await supabaseAdmin
+    // Consultar telemetría de Aireador ODrive S1 (orden descendente para garantizar puntos recientes)
+    const { data: rawMotorData, error: motorErr } = await supabaseAdmin
       .from('motor_telemetry')
       .select('*')
+      .eq('device_id', 'b0000000-0000-0000-0000-000000000002')
       .gte('recorded_at', since)
       .lte('recorded_at', until)
-      .order('recorded_at', { ascending: true })
-      .limit(500);
+      .order('recorded_at', { ascending: false })
+      .limit(300);
+
+    const motorData = rawMotorData ? [...rawMotorData].reverse() : null;
 
     if (sensorErr || motorErr) {
       console.error('Error consultando historial:', sensorErr || motorErr);
@@ -100,12 +103,14 @@ export async function GET(req: NextRequest) {
       });
     });
 
-    // Añadir telemetría de motor al punto temporal más cercano o nuevo
+    // Añadir telemetría de Aireador ODrive S1 al punto temporal más cercano o nuevo
     motorData?.forEach(m => {
       const date = new Date(m.recorded_at);
+      const rpmVal = m.pwm_us !== undefined && m.pwm_us !== null ? Number(m.pwm_us) : Math.round((Number(m.speed_percent) / 100) * 3500);
       const existing = historyPoints.find(p => Math.abs(new Date(p.timestamp).getTime() - date.getTime()) < 30000);
       if (existing) {
         existing.motor_speed_percent = Number(m.speed_percent);
+        existing.odrive_rpm = rpmVal;
         existing.motor_is_on = Boolean(m.is_on);
         existing.motor_power_w = m.power_w ? Number(m.power_w) : undefined;
       } else {
@@ -113,6 +118,7 @@ export async function GET(req: NextRequest) {
           timestamp: m.recorded_at,
           timeLabel: formatLabel(date),
           motor_speed_percent: Number(m.speed_percent),
+          odrive_rpm: rpmVal,
           motor_is_on: Boolean(m.is_on),
           motor_power_w: m.power_w ? Number(m.power_w) : undefined
         });

@@ -132,6 +132,7 @@ export function generateDemoHistory(hours: number = 24): HistoryDataPoint[] {
       water_temperature_c: formattedTemp,
       battery_v: Number((4.2 - (i / totalPoints) * 0.05).toFixed(2)),
       motor_speed_percent: speed,
+      odrive_rpm: Math.round((speed / 100) * 3500),
       motor_is_on: speed > 0,
       motor_power_w: speed > 0 ? Number((speed * 1.95 + (Math.random() * 5)).toFixed(1)) : 0
     });

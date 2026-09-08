@@ -137,6 +137,7 @@ export interface HistoryDataPoint {
   water_temperature_c?: number;
   battery_v?: number;
   motor_speed_percent?: number;
+  odrive_rpm?: number;
   motor_is_on?: boolean;
   motor_power_w?: number;
 }
