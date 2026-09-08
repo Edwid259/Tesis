@@ -105,7 +105,7 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            Velocidad Aireador
+            ODrive S1 (RPM)
           </button>
         </div>
 
@@ -159,7 +159,7 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
               }`}
             >
               {showSpeed ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-              <span>Velocidad Aireador (RPM)</span>
+              <span>ODrive S1 (RPM)</span>
             </button>
 
             <button
@@ -241,7 +241,7 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                     yAxisId="right"
                     type="monotone"
                     dataKey="odrive_rpm"
-                    name="Velocidad Aireador (ODrive S1)"
+                    name="ODrive S1 (RPM)"
                     unit=" RPM"
                     stroke="#3b82f6"
                     strokeWidth={2}
@@ -335,7 +335,7 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                 <Area
                   type="monotone"
                   dataKey="odrive_rpm"
-                  name="Velocidad Aireador (ODrive S1)"
+                  name="ODrive S1 (RPM)"
                   unit=" RPM"
                   stroke="#3b82f6"
                   strokeWidth={2.5}

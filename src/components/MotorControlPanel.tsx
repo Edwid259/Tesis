@@ -46,12 +46,7 @@ export const MotorControlPanel: React.FC<MotorControlPanelProps> = ({
     };
   }, []);
 
-  // Si el dispositivo cae offline, deshabilitar interruptor de proteccion
-  useEffect(() => {
-    if (!isDeviceOnline) {
-      setIsOn(false);
-    }
-  }, [isDeviceOnline]);
+  // Consigna permanece bajo control del operador (sin reseteo automatico por parpadeos de red)
 
   // Cálculo de RPM de consigna para comando (0 a 3500 RPM)
   const commandRpm = !isOn ? 0 : Math.round((targetSpeed / 100) * 3500);
@@ -110,8 +105,10 @@ export const MotorControlPanel: React.FC<MotorControlPanelProps> = ({
       let payload: any = {};
 
       if (controlMode === 'manual') {
-        commandType = isOn ? (targetSpeed > 0 ? 'set_speed' : 'stop') : 'stop';
-        speed = isOn ? targetSpeed : 0;
+        const active = isOn || targetSpeed > 0;
+        if (targetSpeed > 0 && !isOn) setIsOn(true);
+        commandType = active && targetSpeed > 0 ? 'set_speed' : 'stop';
+        speed = active ? targetSpeed : 0;
         payload = { mode: 'manual', manual_throttle_pct: speed };
       } else {
         commandType = 'set_mode';
@@ -294,8 +291,12 @@ export const MotorControlPanel: React.FC<MotorControlPanelProps> = ({
                 max="100"
                 step="5"
                 value={targetSpeed}
-                disabled={!isDeviceOnline || !isOn || isSending}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTargetSpeed(Number(e.target.value))}
+                disabled={!isDeviceOnline || isSending}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                  const val = Number(e.target.value);
+                  setTargetSpeed(val);
+                  if (val > 0 && !isOn) setIsOn(true);
+                }}
                 className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-amber-400 disabled:opacity-40 disabled:cursor-not-allowed"
               />
               <span className="text-xs text-slate-500 font-bold">100%</span>

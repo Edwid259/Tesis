@@ -34,19 +34,7 @@ export const EscT200ControlPanel: React.FC<EscT200ControlPanelProps> = ({
     };
   }, []);
 
-  // Sincronizar con telemetría externa si no se está enviando orden
-  useEffect(() => {
-    if (!isDeviceOnline) {
-      setIsOn(false);
-      return;
-    }
-    if (currentTelemetry && !isSending) {
-      setIsOn(currentTelemetry.is_on);
-      if (currentTelemetry.speed_percent >= 0) {
-        setTargetSpeed(currentTelemetry.speed_percent);
-      }
-    }
-  }, [currentTelemetry, isDeviceOnline, isSending]);
+  // Consigna desacoplada de telemetria para evitar pisar el control del operador
 
   // Cálculo de microsegundos PWM para Blue Robotics T200 (ESC Basic / ESC500)
   // 0% -> 1500 µs (Neutro / Reposo), 100% -> 1900 µs (Máximo Avance)
@@ -232,7 +220,7 @@ export const EscT200ControlPanel: React.FC<EscT200ControlPanelProps> = ({
               max="100"
               step="5"
               value={targetSpeed}
-              disabled={!isDeviceOnline || !isOn || isSending}
+              disabled={!isDeviceOnline || isSending}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTargetSpeed(Number(e.target.value))}
               className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-amber-400 disabled:opacity-40"
             />
