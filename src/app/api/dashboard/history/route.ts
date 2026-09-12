@@ -46,14 +46,16 @@ export async function GET(req: NextRequest) {
       until = new Date(endDateParam).toISOString();
     }
 
-    // Consultar lecturas de sensor
-    const { data: sensorData, error: sensorErr } = await supabaseAdmin
+    // Consultar lecturas de sensor (orden descendente para garantizar puntos recientes si supera el límite)
+    const { data: rawSensorData, error: sensorErr } = await supabaseAdmin
       .from('sensor_readings')
       .select('*')
       .gte('recorded_at', since)
       .lte('recorded_at', until)
-      .order('recorded_at', { ascending: true })
-      .limit(500);
+      .order('recorded_at', { ascending: false })
+      .limit(1000);
+
+    const sensorData = rawSensorData ? [...rawSensorData].reverse() : null;
 
     // Consultar telemetría de Aireador ODrive S1 (orden descendente para garantizar puntos recientes)
     const { data: rawMotorData, error: motorErr } = await supabaseAdmin

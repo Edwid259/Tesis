@@ -188,3 +188,7 @@ export interface HistoryDataPoint {
   motor_is_on?: boolean;
   motor_power_w?: number;
 }
+
+export type ClearCategory = 'sensor_readings' | 'motor_telemetry' | 'experiments' | 'alerts_commands';
+export type TimeScope = 'all' | 'older_than_1h' | 'older_than_24h' | 'older_than_today';
+

@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { Trash2, AlertTriangle, X, CheckSquare, Square, Clock, ShieldAlert, Loader2 } from 'lucide-react';
-import { ClearCategory, TimeScope } from '@/app/api/database/clear/route';
+import { ClearCategory, TimeScope } from '@/types';
 
 interface ClearDatabaseModalProps {
   isOpen: boolean;

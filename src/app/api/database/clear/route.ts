@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
+import { ClearCategory, TimeScope } from '@/types';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 export const fetchCache = 'force-no-store';
-
-export type ClearCategory = 'sensor_readings' | 'motor_telemetry' | 'experiments' | 'alerts_commands';
-export type TimeScope = 'all' | 'older_than_1h' | 'older_than_24h' | 'older_than_today';
 
 interface ClearRequestBody {
   categories: ClearCategory[];

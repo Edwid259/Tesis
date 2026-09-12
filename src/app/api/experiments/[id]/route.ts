@@ -71,24 +71,42 @@ export async function DELETE(
           description: 'Registro histórico de experimentos de oxigenación y muestreo'
         });
 
-      // 4. Si el experimento estaba activo en devices.metadata, limpiarlo
+      // 4. Si el experimento estaba activo en devices.metadata, limpiarlo y despachar stop al sensor
       const { data: dev } = await supabaseAdmin
         .from('devices')
         .select('metadata')
         .eq('id', 'a0000000-0000-0000-0000-000000000001')
         .maybeSingle();
 
-      if (dev?.metadata?.active_experiment?.id === id) {
+      if (targetExp.status === 'active' || dev?.metadata?.active_experiment?.id === id) {
         await supabaseAdmin
           .from('devices')
           .update({
             metadata: {
-              ...dev.metadata,
+              ...dev?.metadata,
               monitor_active: false,
               active_experiment: null
             }
           })
           .eq('id', 'a0000000-0000-0000-0000-000000000001');
+
+        const stopPayload = {
+          action: 'stop_experiment',
+          experiment_id: id
+        };
+        const baseStopCmd = {
+          device_id: 'a0000000-0000-0000-0000-000000000001',
+          command_type: 'stop',
+          speed_percent: 0,
+          pwm_us: 1500,
+          status: 'pending',
+          requested_by: 'Experimento (eliminado)',
+          error_message: JSON.stringify(stopPayload)
+        };
+        const resStop = await supabaseAdmin.from('control_commands').insert({ ...baseStopCmd, payload: stopPayload });
+        if (resStop.error) {
+          await supabaseAdmin.from('control_commands').insert(baseStopCmd);
+        }
       }
 
       return NextResponse.json({
