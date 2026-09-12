@@ -7,11 +7,12 @@ export const revalidate = 0;
 export const fetchCache = 'force-no-store';
 
 /**
- * Permite que el ESP32 del Thruster consulte comandos de control pendientes (polling HTTP/HTTPS)
+ * Permite que cualquier dispositivo ESP32 autenticado (motor_thruster o sensor_do)
+ * consulte comandos de control pendientes (polling HTTP/HTTPS)
  */
 export async function GET(req: NextRequest) {
-  // Autenticar que sea el ESP32 del motor
-  const { device, errorResponse } = await authenticateDevice(req, 'motor_thruster');
+  // Autenticar que sea un dispositivo registrado
+  const { device, errorResponse } = await authenticateDevice(req);
   if (errorResponse) return errorResponse;
 
   try {
@@ -31,8 +32,8 @@ export async function GET(req: NextRequest) {
       .order('created_at', { ascending: false })
       .limit(1);
 
-    // 2. Si no encontro con device_id exacto, buscar cualquier comando pendiente global para motor
-    if (!commands || commands.length === 0) {
+    // 2. Si no encontro con device_id exacto y es un motor, buscar comando pendiente global
+    if ((!commands || commands.length === 0) && device.type === 'motor_thruster') {
       const fallbackQuery = await supabaseAdmin
         .from('control_commands')
         .select('*')

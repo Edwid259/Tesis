@@ -15,13 +15,13 @@ export async function POST(
 ) {
   const { id } = params;
 
-  // 1. Autenticar ESP32
-  const { device, errorResponse } = await authenticateDevice(req, 'motor_thruster');
+  // 1. Autenticar ESP32 (cualquier dispositivo registrado)
+  const { device, errorResponse } = await authenticateDevice(req);
   if (errorResponse) return errorResponse;
 
   try {
     const body = await req.json().catch(() => ({}));
-    const { success = true, actual_speed_percent, error_message } = body;
+    const { success = true, actual_speed_percent, error_message, sensor_state } = body;
 
     if (!isSupabaseConfigured() || !device) {
       return NextResponse.json({
@@ -46,8 +46,20 @@ export async function POST(
       return NextResponse.json({ error: 'Comando no encontrado o error en actualización' }, { status: 404 });
     }
 
+    // Actualizar metadatos de sensor si se enviaron cambios de estado (e.g. monitor_active)
+    if (device.type === 'sensor_do' && sensor_state) {
+      const currentMeta = device.metadata || {};
+      await supabaseAdmin
+        .from('devices')
+        .update({
+          metadata: { ...currentMeta, ...sensor_state },
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', device.id);
+    }
+
     // Actualizar telemetría actual de motor si se recibió la velocidad confirmada
-    if (actual_speed_percent !== undefined) {
+    if (actual_speed_percent !== undefined && device.type === 'motor_thruster') {
       const speed = Number(actual_speed_percent);
       const pwm_us = Math.round(1500 + (speed / 100) * 400);
       await supabaseAdmin.from('motor_telemetry').insert({

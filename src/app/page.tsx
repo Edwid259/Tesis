@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Header } from '@/components/Header';
 import { MetricCards } from '@/components/MetricCards';
+import { SensorControlPanel } from '@/components/SensorControlPanel';
 import { MotorControlPanel } from '@/components/MotorControlPanel';
 import { EscT200ControlPanel } from '@/components/EscT200ControlPanel';
 import { ChartsSection } from '@/components/ChartsSection';
@@ -174,7 +175,15 @@ export default function DashboardPage() {
           />
         </section>
 
-        {/* 2. Paneles de Control de Aireación (Dual: ODrive S1 Principal & T-200 ESC Auxiliar) */}
+        {/* 2. Panel de Control y Configuración del Sensor de Oxígeno Disuelto (OD-Logger) */}
+        <section>
+          <SensorControlPanel
+            sensorDevice={summary.sensorDevice}
+            onCommandSent={() => fetchDashboardData(true)}
+          />
+        </section>
+
+        {/* 3. Paneles de Control de Aireación (Dual: ODrive S1 Principal & T-200 ESC Auxiliar) */}
         <section className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-stretch">
           <div className="xl:col-span-2">
             <MotorControlPanel

@@ -24,7 +24,14 @@ export const demoSensorDevice: Device = {
   location: 'Estanque Principal (Zona Norte)',
   status: 'online',
   last_seen_at: new Date().toISOString(),
-  created_at: '2026-08-01T00:00:00Z'
+  created_at: '2026-08-01T00:00:00Z',
+  metadata: {
+    sensor_model: 'Aqualabo DIGISENS',
+    interface: 'Modbus RS485',
+    monitor_active: false,
+    monitor_interval_sec: 5,
+    sleep_cycle_min: 15
+  }
 };
 
 export const demoMotorDevice: Device = {

@@ -130,9 +130,37 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // 6. Comprobar si existen comandos de control pendientes para el sensor (Zero extra-handshake latency)
+    let pendingCommand: any = null;
+    if (isSupabaseConfigured() && device) {
+      const { data: cmdRows } = await supabaseAdmin
+        .from('control_commands')
+        .select('*')
+        .eq('device_id', device.id)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (cmdRows && cmdRows.length > 0) {
+        pendingCommand = {
+          id: cmdRows[0].id,
+          command_type: cmdRows[0].command_type,
+          payload: cmdRows[0].payload || {},
+          created_at: cmdRows[0].created_at
+        };
+        // Marcar como sent
+        await supabaseAdmin
+          .from('control_commands')
+          .update({ status: 'sent', sent_at: new Date().toISOString() })
+          .eq('id', cmdRows[0].id);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Telemetría de sensor recibida y procesada correctamente',
+      has_command: Boolean(pendingCommand),
+      pending_command: pendingCommand,
       data: {
         recorded_at: recordedAt,
         dissolved_oxygen_mg_l: dissolvedOxygenMgL,

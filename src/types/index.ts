@@ -88,18 +88,44 @@ export interface Alert {
   resolved_by?: string | null;
 }
 
+export type SensorCommandAction = 
+  | 'start_monitor' 
+  | 'stop_monitor' 
+  | 'set_sampling_rate' 
+  | 'manual_sample' 
+  | 'sleep' 
+  | 'set_sleep_cycle';
+
+export interface SensorCommandPayload {
+  action: SensorCommandAction;
+  interval_sec?: number;
+  minutes?: number;
+  indefinite?: boolean;
+  measure_time_min?: number;
+  [key: string]: any;
+}
+
 export interface ControlCommand {
   id: string;
   device_id: string;
-  command_type: 'start' | 'stop' | 'set_speed' | 'emergency_stop' | 'reboot';
-  speed_percent: number;
-  pwm_us: number;
+  command_type: 'start' | 'stop' | 'set_speed' | 'emergency_stop' | 'reboot' | 'set_mode' | 'set_config';
+  speed_percent?: number;
+  pwm_us?: number;
+  payload?: Record<string, any> | SensorCommandPayload;
   status: CommandStatus;
   requested_by: string;
   created_at: string;
   sent_at?: string | null;
   executed_at?: string | null;
   error_message?: string | null;
+}
+
+export interface SensorNodeConfig {
+  monitor_active: boolean;
+  monitor_interval_sec: number;
+  sleep_cycle_min: number;
+  last_command?: string;
+  last_command_at?: string;
 }
 
 export interface SystemThresholds {

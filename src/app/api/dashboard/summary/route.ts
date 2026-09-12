@@ -78,8 +78,26 @@ export async function GET(req: NextRequest) {
         location: 'Estanque Principal (Zona Norte)',
         status: 'offline',
         last_seen_at: latestSensorReading?.recorded_at || null,
-        metadata: { interface: 'Modbus RS485', sensor_model: 'Aqualabo DIGISENS' },
+        metadata: {
+          interface: 'Modbus RS485',
+          sensor_model: 'Aqualabo DIGISENS',
+          monitor_active: false,
+          monitor_interval_sec: 5,
+          sleep_cycle_min: 15
+        },
         created_at: new Date().toISOString()
+      };
+    } else {
+      rawSensor = {
+        ...rawSensor,
+        metadata: {
+          interface: 'Modbus RS485',
+          sensor_model: 'Aqualabo DIGISENS',
+          monitor_active: false,
+          monitor_interval_sec: 5,
+          sleep_cycle_min: 15,
+          ...(rawSensor.metadata || {})
+        }
       };
     }
 
