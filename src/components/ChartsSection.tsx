@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -14,8 +14,8 @@ import {
   Legend,
   ReferenceLine
 } from 'recharts';
-import { HistoryDataPoint, SystemThresholds } from '@/types';
-import { LineChart as ChartIcon, Eye, EyeOff, Calendar } from 'lucide-react';
+import { HistoryDataPoint, SystemThresholds, Experiment } from '@/types';
+import { LineChart as ChartIcon, Eye, EyeOff, Calendar, FlaskConical, Download } from 'lucide-react';
 
 interface ChartsSectionProps {
   history: HistoryDataPoint[];
@@ -23,6 +23,7 @@ interface ChartsSectionProps {
   selectedRange: string;
   onRangeChange: (range: string) => void;
   isLoading: boolean;
+  activeExperiment?: Experiment | null;
 }
 
 export const ChartsSection: React.FC<ChartsSectionProps> = ({
@@ -30,12 +31,20 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
   thresholds,
   selectedRange,
   onRangeChange,
-  isLoading
+  isLoading,
+  activeExperiment
 }) => {
-  const [activeTab, setActiveTab] = useState<'combined' | 'do' | 'motor'>('combined');
+  const [activeTab, setActiveTab] = useState<'combined' | 'do' | 'motor' | 'experiment'>('combined');
   const [showDO, setShowDO] = useState<boolean>(true);
   const [showSpeed, setShowSpeed] = useState<boolean>(true);
   const [showTemp, setShowTemp] = useState<boolean>(true);
+
+  // Auto-transición a vista de experimento cuando se inicia uno nuevo
+  useEffect(() => {
+    if (activeExperiment && activeExperiment.status === 'active') {
+      setActiveTab('experiment');
+    }
+  }, [activeExperiment?.id, activeExperiment?.status]);
 
   const ranges = [
     { label: 'Última Hora', value: '1h' },
@@ -107,6 +116,21 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
           >
             ODrive S1 (RPM)
           </button>
+
+          <button
+            onClick={() => setActiveTab('experiment')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              activeTab === 'experiment'
+                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/40'
+                : activeExperiment
+                ? 'text-emerald-400 bg-emerald-950/60 border border-emerald-800/80 animate-pulse'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <FlaskConical className="w-3.5 h-3.5" />
+            <span>Experimento en Vivo</span>
+            {activeExperiment && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />}
+          </button>
         </div>
 
         {/* Filtros de Rango Temporal y Zona Horaria */}
@@ -174,6 +198,33 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
               <span>Temperatura (°C)</span>
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Banner de Monitoreo Experimental en Vivo */}
+      {activeTab === 'experiment' && (
+        <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-emerald-950/40 border border-emerald-800/60 text-xs animate-in fade-in duration-150">
+          <div className="flex items-center gap-2 text-emerald-300">
+            <FlaskConical className="w-4 h-4 text-emerald-400 animate-pulse" />
+            <span className="font-bold">
+              {activeExperiment ? activeExperiment.name : 'Monitoreo Experimental en Vivo'}
+            </span>
+            {activeExperiment && (
+              <span className="text-[11px] font-mono text-emerald-400/80">
+                (Archivo SD: {activeExperiment.csv_filename} • Muestreo cada {activeExperiment.sampling_rate_sec}s)
+              </span>
+            )}
+          </div>
+          {activeExperiment && (
+            <a
+              href={`/api/experiments/${activeExperiment.id}/download`}
+              download={activeExperiment.csv_filename}
+              className="flex items-center gap-1 text-[11px] font-bold text-emerald-300 hover:text-emerald-200 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Descargar CSV</span>
+            </a>
+          )}
         </div>
       )}
 
@@ -318,8 +369,64 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                   fill="url(#colorDOOnly)"
                 />
               </AreaChart>
+            ) : activeTab === 'experiment' ? (
+              // 3. GRÁFICA EN VIVO DEL EXPERIMENTO
+              <AreaChart data={history} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="colorExpDO" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.6} />
+                    <stop offset="95%" stopColor="#06b6d4" stopOpacity={0.05} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" opacity={0.6} />
+                <XAxis dataKey="timeLabel" stroke="#10b981" tick={{ fontSize: 11 }} />
+                <YAxis yAxisId="left" stroke="#10b981" domain={[2, 12]} tick={{ fontSize: 11 }} unit=" mg/L" />
+                <YAxis yAxisId="right" orientation="right" stroke="#14b8a6" domain={[15, 35]} tick={{ fontSize: 11 }} unit=" °C" />
+                <Tooltip content={<CustomTooltip />} />
+                <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '6px' }} />
+
+                <ReferenceLine
+                  yAxisId="left"
+                  y={thresholds.optimal}
+                  stroke="#10b981"
+                  strokeWidth={1.5}
+                  strokeDasharray="3 3"
+                  label={{ value: `Meta OD: ${thresholds.optimal} mg/L`, fill: '#10b981', fontSize: 10 }}
+                />
+                <ReferenceLine
+                  yAxisId="left"
+                  y={thresholds.critical}
+                  stroke="#f43f5e"
+                  strokeWidth={1.5}
+                  strokeDasharray="4 4"
+                  label={{ value: `Crítico: ${thresholds.critical} mg/L`, fill: '#f43f5e', fontSize: 10 }}
+                />
+
+                <Area
+                  yAxisId="left"
+                  type="monotone"
+                  dataKey="dissolved_oxygen_mg_l"
+                  name="OD Experimental"
+                  unit="mg/L"
+                  stroke="#10b981"
+                  strokeWidth={3}
+                  fillOpacity={1}
+                  fill="url(#colorExpDO)"
+                />
+
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="water_temperature_c"
+                  name="Temp. Agua"
+                  unit="°C"
+                  stroke="#14b8a6"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              </AreaChart>
             ) : (
-              // 3. GRÁFICA DE VELOCIDAD DE AIREADOR ODRIVE S1 (M8325s) EN RPM
+              // 4. GRÁFICA DE VELOCIDAD DE AIREADOR ODRIVE S1 (M8325s) EN RPM
               <AreaChart data={history} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorMotorOnly" x1="0" y1="0" x2="0" y2="1">

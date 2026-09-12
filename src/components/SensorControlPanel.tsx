@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Activity,
   Play,
@@ -16,23 +16,34 @@ import {
   RefreshCw,
   Info,
   Radio,
-  Timer
+  Timer,
+  FlaskConical,
+  Download,
+  FileSpreadsheet,
+  ChevronDown,
+  ChevronUp,
+  Sparkles
 } from 'lucide-react';
-import { Device, SensorCommandAction, SensorCommandPayload } from '@/types';
+import { Device, SensorCommandAction, SensorCommandPayload, Experiment } from '@/types';
+import { demoExperiments } from '@/lib/demoData';
 
 interface SensorControlPanelProps {
   sensorDevice: Device | null;
   onCommandSent: () => void;
+  onExperimentStarted?: (experiment: Experiment) => void;
+  onExperimentStopped?: () => void;
 }
 
 export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
   sensorDevice,
-  onCommandSent
+  onCommandSent,
+  onExperimentStarted,
+  onExperimentStopped
 }) => {
   const isDeviceOnline = sensorDevice?.status === 'online';
   const targetDeviceId = sensorDevice?.id || 'a0000000-0000-0000-0000-000000000001';
 
-  // 1. Estado de Modo Monitor y Frecuencia de Muestreo (Sampling Rate)
+  // 1. Estado de Modo Monitor y Frecuencia de Muestreo
   const initialMonitorActive = Boolean(sensorDevice?.metadata?.monitor_active ?? false);
   const initialMonitorInterval = Number(sensorDevice?.metadata?.monitor_interval_sec ?? 5);
   const initialSleepCycle = Number(sensorDevice?.metadata?.sleep_cycle_min ?? 15);
@@ -40,15 +51,30 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
   const [isMonitorActive, setIsMonitorActive] = useState<boolean>(initialMonitorActive);
   const [monitorIntervalSec, setMonitorIntervalSec] = useState<number>(initialMonitorInterval);
 
-  // 2. Estado de Ciclo de Sueño Autónomo (Sleep Cycle)
+  // 2. Estado de Ciclo de Sueño Autónomo
   const [sleepCycleMin, setSleepCycleMin] = useState<number>(initialSleepCycle);
 
-  // 3. Estado de Suspensión Directa (Deep Sleep)
+  // 3. Estado de Suspensión Directa
   const [sleepDurationMin, setSleepDurationMin] = useState<number>(30);
   const [isIndefiniteSleep, setIsIndefiniteSleep] = useState<boolean>(false);
   const [showIndefiniteConfirm, setShowIndefiniteConfirm] = useState<boolean>(false);
 
-  // 4. Estados de Envío y Feedback
+  // 4. Estado del Sistema de Experimentos
+  const [experiments, setExperiments] = useState<Experiment[]>([]);
+  const [activeExperiment, setActiveExperiment] = useState<Experiment | null>(null);
+  const [showNewExpModal, setShowNewExpModal] = useState<boolean>(false);
+  const [showExpHistory, setShowExpHistory] = useState<boolean>(false);
+
+  // Formulario de nuevo experimento
+  const [expName, setExpName] = useState<string>('Ensayo Reoxigenación ODrive 01');
+  const [expRate, setExpRate] = useState<number>(2);
+  const [expFilename, setExpFilename] = useState<string>('EXP_01.CSV');
+  const [expDesc, setExpDesc] = useState<string>('Evaluación de transferencia de O2 y dinámica de saturación.');
+
+  // Cronómetro en tiempo real para experimento activo
+  const [elapsedSec, setElapsedSec] = useState<number>(0);
+
+  // 5. Estados de Envío y Feedback
   const [isSending, setIsSending] = useState<boolean>(false);
   const [activeAction, setActiveAction] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error' | 'info' | null; message: string }>({
@@ -56,7 +82,7 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
     message: ''
   });
 
-  const feedbackTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => {
@@ -64,8 +90,46 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
     };
   }, []);
 
+  // Cargar lista de experimentos al inicio
+  const fetchExperiments = async () => {
+    try {
+      const res = await fetch('/api/experiments');
+      if (res.ok) {
+        const data = await res.json();
+        const expList: Experiment[] = data.experiments || [];
+        setExperiments(expList);
+        const running = expList.find(e => e.status === 'active') || null;
+        setActiveExperiment(running);
+      }
+    } catch {
+      setExperiments(demoExperiments as Experiment[]);
+    }
+  };
+
+  useEffect(() => {
+    fetchExperiments();
+  }, []);
+
+  // Reloj de tiempo transcurrido cuando hay un experimento activo
+  useEffect(() => {
+    if (!activeExperiment) {
+      setElapsedSec(0);
+      return;
+    }
+
+    const startTs = new Date(activeExperiment.started_at).getTime();
+    const updateTimer = () => {
+      const sec = Math.max(0, Math.floor((Date.now() - startTs) / 1000));
+      setElapsedSec(sec);
+    };
+
+    updateTimer();
+    const timerInterval = setInterval(updateTimer, 1000);
+    return () => clearInterval(timerInterval);
+  }, [activeExperiment]);
+
   // Sincronizar estado cuando los metadatos del sensor llegan o se actualizan desde el servidor
-  const hasInitializedRef = React.useRef<boolean>(false);
+  const hasInitializedRef = useRef<boolean>(false);
   useEffect(() => {
     if (sensorDevice?.metadata && !hasInitializedRef.current) {
       if (sensorDevice.metadata.monitor_active !== undefined) {
@@ -76,6 +140,9 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
       }
       if (sensorDevice.metadata.sleep_cycle_min) {
         setSleepCycleMin(Number(sensorDevice.metadata.sleep_cycle_min));
+      }
+      if (sensorDevice.metadata.active_experiment) {
+        setActiveExperiment(sensorDevice.metadata.active_experiment);
       }
       hasInitializedRef.current = true;
     }
@@ -198,6 +265,89 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
     setIsMonitorActive(false);
   };
 
+  // 5. Gestión de Experimentos
+  const handleStartExperiment = async () => {
+    if (!expName.trim()) {
+      showFeedback('error', 'Por favor ingresa un nombre para el experimento.');
+      return;
+    }
+
+    setIsSending(true);
+    try {
+      const res = await fetch('/api/experiments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: expName.trim(),
+          sampling_rate_sec: expRate,
+          csv_filename: expFilename,
+          description: expDesc
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error al iniciar experimento');
+
+      setActiveExperiment(data.experiment);
+      setIsMonitorActive(true);
+      setMonitorIntervalSec(expRate);
+      setShowNewExpModal(false);
+      showFeedback('success', `¡Experimento '${data.experiment.name}' iniciado! Muestreando a ${expRate}s en ${expFilename}`);
+      
+      // Auto-transición a Live View
+      onExperimentStarted?.(data.experiment);
+      fetchExperiments();
+    } catch (err: any) {
+      showFeedback('error', err.message || 'Error iniciando experimento');
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const handleStopExperiment = async () => {
+    if (!activeExperiment) return;
+
+    setIsSending(true);
+    try {
+      const res = await fetch('/api/experiments', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ experiment_id: activeExperiment.id })
+      });
+
+      if (!res.ok) throw new Error('Error al detener experimento');
+
+      showFeedback('info', `Experimento '${activeExperiment.name}' finalizado.`);
+      setActiveExperiment(null);
+      setIsMonitorActive(false);
+      onExperimentStopped?.();
+      fetchExperiments();
+    } catch (err: any) {
+      showFeedback('error', err.message || 'Error deteniendo experimento');
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const handleDownloadCsv = (expId: string, filename: string) => {
+    // Dispara la descarga del CSV directo del endpoint
+    const url = `/api/experiments/${expId}/download`;
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Formateador de tiempo transcurrido HH:MM:SS
+  const formatTimer = (totalSec: number) => {
+    const hh = Math.floor(totalSec / 3600).toString().padStart(2, '0');
+    const mm = Math.floor((totalSec % 3600) / 60).toString().padStart(2, '0');
+    const ss = (totalSec % 60).toString().padStart(2, '0');
+    return `${hh}:${mm}:${ss}`;
+  };
+
   const intervalPresets = [1, 2, 5, 10, 15, 30];
   const sleepCyclePresets = [5, 10, 15, 30, 60];
   const timedSleepPresets = [15, 30, 60, 120];
@@ -216,7 +366,7 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h3 className="text-base font-bold text-white tracking-wide">
-                Control del Sensor Óptico (OD-Logger)
+                Control del Sensor Óptico & Ensayos Experimentales
               </h3>
               <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold border ${
                 isDeviceOnline
@@ -228,23 +378,27 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              Aqualabo DIGISENS • RS-485 Modbus • Enlace ESP-NOW / WiFi
+              Aqualabo DIGISENS • Registro en SD (CSV) • Live Telemetry Stream
             </p>
           </div>
         </div>
 
-        {/* Estado actual del modo de operación */}
-        <div className="flex items-center gap-2">
-          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-semibold ${
-            isMonitorActive
-              ? 'bg-cyan-950/70 border-cyan-600/70 text-cyan-300 shadow-cyan-900/20 shadow-lg'
-              : 'bg-slate-800/60 border-slate-700/60 text-slate-300'
-          }`}>
-            <Radio className={`w-3.5 h-3.5 ${isMonitorActive ? 'text-cyan-400 animate-spin' : 'text-slate-500'}`} />
-            <span>
-              {isMonitorActive ? `Modo Monitor (${monitorIntervalSec}s)` : `Ciclo Periódico (${sleepCycleMin}m)`}
-            </span>
-          </div>
+        {/* Acciones Rápidas: Estado Actual y Botón Nuevo Experimento */}
+        <div className="flex items-center gap-2.5">
+          {activeExperiment && (
+            <div className="flex items-center gap-2 px-3 py-1 rounded-xl bg-cyan-950/80 border border-cyan-700/80 text-cyan-300 text-xs font-bold animate-pulse shadow-md">
+              <span className="w-2 h-2 rounded-full bg-cyan-400" />
+              <span>EXP EN VIVO: {formatTimer(elapsedSec)}</span>
+            </div>
+          )}
+
+          <button
+            onClick={() => setShowNewExpModal(!showNewExpModal)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-cyan-950 bg-gradient-to-r from-cyan-400 to-teal-400 hover:from-cyan-300 hover:to-teal-300 transition-all shadow-md shadow-cyan-900/30"
+          >
+            <FlaskConical className="w-3.5 h-3.5" />
+            <span>{showNewExpModal ? 'Cerrar Creador' : 'Nuevo Experimento'}</span>
+          </button>
         </div>
       </div>
 
@@ -265,6 +419,161 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
             <Info className="w-4 h-4 flex-shrink-0 text-cyan-400" />
           )}
           <span className="flex-1 font-medium">{feedback.message}</span>
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* SECCIÓN ESPECIAL: EXPERIMENTO EN CURSO (STUDIO ACTIVO)       */}
+      {/* ============================================================ */}
+      {activeExperiment && (
+        <div className="p-4 rounded-2xl border border-cyan-500/50 bg-gradient-to-r from-cyan-950/80 via-slate-900/90 to-teal-950/80 shadow-2xl flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className="p-3 rounded-2xl bg-cyan-500/20 text-cyan-300 border border-cyan-400/40">
+              <FlaskConical className="w-6 h-6 animate-pulse" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest bg-cyan-500 text-cyan-950">
+                  En Curso
+                </span>
+                <h4 className="text-sm font-bold text-white tracking-wide">
+                  {activeExperiment.name}
+                </h4>
+              </div>
+              <div className="flex items-center gap-3 text-xs text-slate-300 mt-1">
+                <span>Archivo SD: <strong className="text-cyan-300 font-mono">{activeExperiment.csv_filename}</strong></span>
+                <span>•</span>
+                <span>Frecuencia: <strong className="text-cyan-300 font-mono">{activeExperiment.sampling_rate_sec}s</strong></span>
+                <span>•</span>
+                <span>Muestras estimadas: <strong className="text-emerald-300 font-mono">
+                  {Math.floor(elapsedSec / (activeExperiment.sampling_rate_sec || 1))}
+                </strong></span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="text-right pr-2">
+              <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold block">Tiempo Transcurrido</span>
+              <span className="text-xl font-extrabold font-mono text-cyan-300 tracking-wider">
+                {formatTimer(elapsedSec)}
+              </span>
+            </div>
+
+            <button
+              onClick={() => handleDownloadCsv(activeExperiment.id, activeExperiment.csv_filename)}
+              className="px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-all flex items-center gap-1.5 shadow-sm"
+              title="Descargar CSV con las muestras tomadas hasta este momento"
+            >
+              <Download className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Descargar CSV</span>
+            </button>
+
+            <button
+              onClick={handleStopExperiment}
+              disabled={isSending}
+              className="px-4 py-2 rounded-xl text-xs font-bold text-rose-100 bg-rose-600 hover:bg-rose-500 transition-all flex items-center gap-1.5 shadow-lg shadow-rose-900/40"
+            >
+              <Square className="w-3.5 h-3.5 fill-rose-100" />
+              <span>Detener Experimento</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* MODAL / FORMULARIO INLINE: CREAR NUEVO EXPERIMENTO            */}
+      {/* ============================================================ */}
+      {showNewExpModal && (
+        <div className="p-5 rounded-2xl border border-cyan-700/60 bg-slate-950/90 shadow-2xl animate-in fade-in zoom-in-95 duration-200 space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div className="flex items-center gap-2 text-cyan-300 font-bold text-sm">
+              <Sparkles className="w-4 h-4 text-cyan-400" />
+              <span>Configuración del Nuevo Experimento</span>
+            </div>
+            <span className="text-xs text-slate-400">Genera archivo CSV aislado en memoria SD</span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Nombre del Experimento */}
+            <div className="md:col-span-2 space-y-1">
+              <label className="text-xs font-semibold text-slate-300">Nombre / Identificador del Ensayo:</label>
+              <input
+                type="text"
+                value={expName}
+                onChange={(e) => {
+                  setExpName(e.target.value);
+                  // Auto-sugerir nombre de archivo 8.3 FAT
+                  const safeName = e.target.value.replace(/[^a-zA-Z0-9]/g, '').slice(0, 6).toUpperCase();
+                  if (safeName) setExpFilename(`${safeName}.CSV`);
+                }}
+                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500 font-medium"
+                placeholder="Ej: Ensayo Reoxigenación ODrive 01"
+              />
+            </div>
+
+            {/* Nombre de archivo CSV en SD */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-slate-300">Archivo en SD (Formato 8.3 FAT):</label>
+              <input
+                type="text"
+                value={expFilename}
+                onChange={(e) => setExpFilename(e.target.value.toUpperCase().slice(0, 12))}
+                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-cyan-300 font-mono focus:outline-none focus:border-cyan-500"
+                placeholder="EXP_01.CSV"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+            {/* Frecuencia de Muestreo */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-300 font-semibold">Tasa de Muestreo:</span>
+                <span className="text-cyan-300 font-mono font-bold">{expRate} segundos</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                {[1, 2, 5, 10, 15, 30].map(val => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => setExpRate(val)}
+                    className={`flex-1 py-1 rounded text-[11px] font-mono transition-colors ${
+                      expRate === val
+                        ? 'bg-cyan-500 text-cyan-950 font-bold'
+                        : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {val}s
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Descripción */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-slate-300">Objetivo / Observaciones:</label>
+              <input
+                type="text"
+                value={expDesc}
+                onChange={(e) => setExpDesc(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-cyan-500"
+                placeholder="Ej: Registro continuo con motor a 65%..."
+              />
+            </div>
+
+            {/* Botón de Lanzamiento */}
+            <div className="flex items-end pt-5">
+              <button
+                onClick={handleStartExperiment}
+                disabled={isSending}
+                className="w-full py-2.5 px-4 rounded-xl font-bold text-xs text-cyan-950 bg-gradient-to-r from-cyan-400 to-teal-400 hover:from-cyan-300 hover:to-teal-300 transition-all flex items-center justify-center gap-2 shadow-lg shadow-cyan-900/40"
+              >
+                <Play className="w-3.5 h-3.5 fill-cyan-950" />
+                <span>Lanzar Experimento & Pasar a Vista en Vivo</span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -536,6 +845,71 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
           </div>
         </div>
 
+      </div>
+
+      {/* ============================================================ */}
+      {/* SECCIÓN HISTORIAL DE EXPERIMENTOS (DESPLEGABLE / TABLA)      */}
+      {/* ============================================================ */}
+      <div className="border-t border-slate-800/80 pt-3">
+        <button
+          onClick={() => setShowExpHistory(!showExpHistory)}
+          className="flex items-center justify-between w-full text-xs font-semibold text-slate-400 hover:text-slate-200 transition-colors py-1"
+        >
+          <span className="flex items-center gap-2">
+            <FileSpreadsheet className="w-4 h-4 text-cyan-400" />
+            <span>Historial de Ensayos y Descarga de Archivos CSV ({experiments.length})</span>
+          </span>
+          {showExpHistory ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        </button>
+
+        {showExpHistory && (
+          <div className="mt-3 space-y-2 animate-in fade-in duration-150">
+            {experiments.length === 0 ? (
+              <p className="text-xs text-slate-500 py-3 text-center">No hay experimentos registrados aún.</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                {experiments.map((exp) => (
+                  <div
+                    key={exp.id}
+                    className="p-3 rounded-xl border border-slate-800 bg-slate-950/60 flex flex-col justify-between gap-2 text-xs"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                          exp.status === 'active'
+                            ? 'bg-cyan-500/20 text-cyan-300'
+                            : 'bg-slate-800 text-slate-400'
+                        }`}>
+                          {exp.status === 'active' ? 'En Curso' : 'Completado'}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          {new Date(exp.started_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                      <h5 className="font-bold text-slate-200 mt-1.5 leading-snug line-clamp-1">{exp.name}</h5>
+                      <p className="text-[11px] text-slate-400 font-mono mt-0.5">
+                        Archivo: <strong className="text-cyan-400">{exp.csv_filename}</strong> ({exp.sampling_rate_sec}s)
+                      </p>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-800/80">
+                      <span className="text-[10px] text-slate-500">
+                        {exp.total_samples > 0 ? `${exp.total_samples} muestras` : 'Datos listos'}
+                      </span>
+                      <button
+                        onClick={() => handleDownloadCsv(exp.id, exp.csv_filename)}
+                        className="flex items-center gap-1 text-[11px] font-semibold text-cyan-400 hover:text-cyan-300 transition-colors"
+                      >
+                        <Download className="w-3 h-3" />
+                        <span>Descargar CSV</span>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

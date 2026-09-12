@@ -94,7 +94,9 @@ export type SensorCommandAction =
   | 'set_sampling_rate' 
   | 'manual_sample' 
   | 'sleep' 
-  | 'set_sleep_cycle';
+  | 'set_sleep_cycle'
+  | 'start_experiment'
+  | 'stop_experiment';
 
 export interface SensorCommandPayload {
   action: SensorCommandAction;
@@ -102,7 +104,26 @@ export interface SensorCommandPayload {
   minutes?: number;
   indefinite?: boolean;
   measure_time_min?: number;
+  experiment_id?: string;
+  name?: string;
+  csv_filename?: string;
   [key: string]: any;
+}
+
+export interface Experiment {
+  id: string;
+  name: string;
+  description?: string;
+  sampling_rate_sec: number;
+  csv_filename: string;
+  status: 'active' | 'completed' | 'stopped';
+  started_at: string;
+  ended_at?: string | null;
+  total_samples: number;
+  min_do?: number | null;
+  max_do?: number | null;
+  avg_do?: number | null;
+  metadata?: Record<string, any>;
 }
 
 export interface ControlCommand {

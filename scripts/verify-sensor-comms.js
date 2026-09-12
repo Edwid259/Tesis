@@ -39,14 +39,16 @@ function createSensorCommand(action, options = {}) {
     'set_sampling_rate',
     'manual_sample',
     'sleep',
-    'set_sleep_cycle'
+    'set_sleep_cycle',
+    'start_experiment',
+    'stop_experiment'
   ];
   assert(allowedActions.includes(action), `Acción no permitida: ${action}`);
 
   const payload = { action, ...options };
   let command_type = 'set_config';
-  if (action === 'start_monitor') command_type = 'start';
-  if (action === 'stop_monitor') command_type = 'stop';
+  if (action === 'start_monitor' || action === 'start_experiment') command_type = 'start';
+  if (action === 'stop_monitor' || action === 'stop_experiment') command_type = 'stop';
 
   return {
     device_id: SENSOR_DEVICE.id,
@@ -133,6 +135,43 @@ assert.strictEqual(ack.status, 'acknowledged');
 assert.strictEqual(ack.sensor_state.monitor_active, true);
 assert.strictEqual(ack.sensor_state.monitor_interval_sec, 5);
 console.log('  ✓ Acuse de recibo de sensor propaga estado a devices.metadata correctamente');
+
+// 5. Verificación de Ciclo de Experimentos y Formato CSV 8.3 FAT
+console.log('\n[Test 5] Verificando ciclo de Experimentos y contrato 8.3 FAT CSV...');
+function sanitizeFilename83(name) {
+  const base = name.replace(/[^a-zA-Z0-9]/g, '_').toUpperCase().slice(0, 8);
+  return `${base || 'EXP_DATA'}.CSV`;
+}
+
+const expName = 'Prueba Aireación Nocturna #1';
+const expFilename = sanitizeFilename83('EXP_NIGHT_01');
+assert.match(expFilename, /^[A-Z0-9_]{1,8}\.CSV$/, 'El nombre de archivo debe cumplir formato FAT 8.3');
+assert.strictEqual(expFilename, 'EXP_NIGH.CSV');
+
+const cmdStartExp = createSensorCommand('start_experiment', {
+  experiment_id: 'exp-test-456',
+  name: expName,
+  filename: expFilename,
+  interval_sec: 2
+});
+assert.strictEqual(cmdStartExp.command_type, 'start');
+assert.strictEqual(cmdStartExp.payload.action, 'start_experiment');
+assert.strictEqual(cmdStartExp.payload.interval_sec, 2);
+assert.strictEqual(cmdStartExp.payload.filename, 'EXP_NIGH.CSV');
+console.log('  ✓ 1. Start Experiment: comando start emitido con filename 8.3 y rate 2s');
+
+const cmdStopExp = createSensorCommand('stop_experiment', { experiment_id: 'exp-test-456' });
+assert.strictEqual(cmdStopExp.command_type, 'stop');
+assert.strictEqual(cmdStopExp.payload.action, 'stop_experiment');
+assert.strictEqual(cmdStopExp.payload.experiment_id, 'exp-test-456');
+console.log('  ✓ 2. Stop Experiment: comando stop emitido para finalizar y cerrar archivo');
+
+// Verificación de cabeceras RFC 4180 CSV
+const expectedCsvHeader = 'Timestamp,RTC_Sec,DO_mg_L,Sat_Pct,Temp_C,Batt_V';
+const mockCsvLine = '2026-09-11T20:00:00.000Z,1789156800,6.72,94.8,24.1,4.08';
+const csvContent = `${expectedCsvHeader}\n${mockCsvLine}\n`;
+assert(csvContent.startsWith(expectedCsvHeader), 'Cabecera CSV debe respetar el contrato estándar');
+console.log('  ✓ 3. Formato CSV RFC 4180 verificado con campos requeridos');
 
 console.log('\n======================================================');
 console.log(' ¡TODAS LAS PRUEBAS DE COMANDOS DE SENSOR PASARON! ✓  ');

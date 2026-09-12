@@ -203,3 +203,36 @@ export const demoAlerts: Alert[] = [
     metadata: { runtime_minutes: 195 }
   }
 ];
+
+export const demoExperiments = [
+  {
+    id: 'exp_demo_01',
+    name: 'Ensayo Curva Reoxigenación ODrive (3500 RPM)',
+    description: 'Evaluación de tasa de transferencia de oxígeno kLa con motor a 100% de aceleración.',
+    sampling_rate_sec: 2,
+    csv_filename: 'EXP_01.CSV',
+    status: 'completed',
+    started_at: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
+    ended_at: new Date(Date.now() - 23 * 3600 * 1000).toISOString(),
+    total_samples: 1800,
+    min_do: 4.12,
+    max_do: 8.45,
+    avg_do: 6.85,
+    metadata: { controller: 'ODrive S1', rpm: 3500 }
+  },
+  {
+    id: 'exp_demo_02',
+    name: 'Prueba de Consumo Nocturno y Calibración DIGISENS',
+    description: 'Registro de descenso biológico de OD sin aireación activa durante la noche.',
+    sampling_rate_sec: 5,
+    csv_filename: 'EXP_02.CSV',
+    status: 'completed',
+    started_at: new Date(Date.now() - 48 * 3600 * 1000).toISOString(),
+    ended_at: new Date(Date.now() - 44 * 3600 * 1000).toISOString(),
+    total_samples: 2880,
+    min_do: 3.85,
+    max_do: 7.92,
+    avg_do: 5.40,
+    metadata: { aerator_status: 'off' }
+  }
+];

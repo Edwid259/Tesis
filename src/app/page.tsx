@@ -13,7 +13,8 @@ import {
   DashboardSummaryResponse,
   HistoryDataPoint,
   MotorEvent,
-  Alert
+  Alert,
+  Experiment
 } from '@/types';
 import {
   demoThresholds,
@@ -51,6 +52,7 @@ export default function DashboardPage() {
   const [selectedRange, setSelectedRange] = useState<string>('24h');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [lastUpdated, setLastUpdated] = useState<string>('Recién cargado');
+  const [activeExperiment, setActiveExperiment] = useState<Experiment | null>(null);
 
   // Función principal para cargar datos de la dashboard
   const fetchDashboardData = useCallback(async (isBackground: boolean = false) => {
@@ -180,6 +182,16 @@ export default function DashboardPage() {
           <SensorControlPanel
             sensorDevice={summary.sensorDevice}
             onCommandSent={() => fetchDashboardData(true)}
+            onExperimentStarted={(exp) => {
+              setActiveExperiment(exp);
+              const el = document.getElementById('charts-section');
+              if (el) {
+                el.scrollIntoView({ behavior: 'smooth' });
+              }
+            }}
+            onExperimentStopped={() => {
+              setActiveExperiment(null);
+            }}
           />
         </section>
 
@@ -201,14 +213,15 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* 3. Gráficas Principales (OD, Velocidad y Combinada con doble eje) */}
-        <section>
+        {/* 4. Gráficas Principales (OD, Velocidad, Combinada y Experimento Activo) */}
+        <section id="charts-section">
           <ChartsSection
             history={history}
             thresholds={summary.thresholds}
             selectedRange={selectedRange}
             onRangeChange={(range) => setSelectedRange(range)}
             isLoading={isLoading}
+            activeExperiment={activeExperiment}
           />
         </section>
 
