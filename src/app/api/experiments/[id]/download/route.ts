@@ -4,6 +4,8 @@ import { demoExperiments, generateDemoHistory } from '@/lib/demoData';
 import { Experiment } from '@/types';
 
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+export const fetchCache = 'force-no-store';
 
 /**
  * GET: Descargar archivo CSV con las mediciones registradas durante el experimento
@@ -30,17 +32,43 @@ export async function GET(
         experiment = settingRow.value.find((e: Experiment) => e.id === id) || null;
       }
 
-      if (experiment && experiment.started_at) {
-        const query = supabaseAdmin
+      // Fallback: Si no está en la lista principal, revisar en metadata de devices (ej. si está activo)
+      if (!experiment) {
+        const { data: sensorDev } = await supabaseAdmin
+          .from('devices')
+          .select('metadata')
+          .eq('id', 'a0000000-0000-0000-0000-000000000001')
+          .maybeSingle();
+
+        if (sensorDev?.metadata?.active_experiment?.id === id) {
+          experiment = sensorDev.metadata.active_experiment;
+        }
+      }
+
+      if (!experiment) {
+        return NextResponse.json(
+          { error: `Experimento '${id}' no encontrado en el registro.` },
+          { status: 404 }
+        );
+      }
+
+      if (experiment.started_at) {
+        let query = supabaseAdmin
           .from('sensor_readings')
           .select('*')
           .gte('recorded_at', experiment.started_at);
 
         if (experiment.ended_at) {
-          query.lte('recorded_at', experiment.ended_at);
+          query = query.lte('recorded_at', experiment.ended_at);
         }
 
-        const { data: rows } = await query.order('recorded_at', { ascending: true });
+        const { data: rows, error: readError } = await query
+          .order('recorded_at', { ascending: true })
+          .limit(10000);
+
+        if (readError) {
+          console.error('Error consultando lecturas de sensor para CSV:', readError);
+        }
         readings = rows || [];
       }
     } else {

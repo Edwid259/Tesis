@@ -5,6 +5,8 @@ import { formatPeruTime, formatPeruDateTime } from '@/lib/dateUtils';
 import { HistoryDataPoint } from '@/types';
 
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+export const fetchCache = 'force-no-store';
 
 /**
  * Obtiene series de tiempo para las gráficas según el rango: '1h', '24h', '7d', o fechas personalizadas
