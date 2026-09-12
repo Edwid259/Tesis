@@ -30,6 +30,7 @@ import { demoExperiments } from '@/lib/demoData';
 
 interface SensorControlPanelProps {
   sensorDevice: Device | null;
+  activeExperiment?: Experiment | null;
   onCommandSent: () => void;
   onExperimentStarted?: (experiment: Experiment) => void;
   onExperimentStopped?: () => void;
@@ -37,6 +38,7 @@ interface SensorControlPanelProps {
 
 export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
   sensorDevice,
+  activeExperiment: propActiveExperiment,
   onCommandSent,
   onExperimentStarted,
   onExperimentStopped
@@ -62,7 +64,14 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
 
   // 4. Estado del Sistema de Experimentos
   const [experiments, setExperiments] = useState<Experiment[]>([]);
-  const [activeExperiment, setActiveExperiment] = useState<Experiment | null>(null);
+  const [activeExperiment, setActiveExperiment] = useState<Experiment | null>(propActiveExperiment || null);
+
+  useEffect(() => {
+    if (propActiveExperiment !== undefined) {
+      setActiveExperiment(propActiveExperiment);
+    }
+  }, [propActiveExperiment]);
+
   const [showNewExpModal, setShowNewExpModal] = useState<boolean>(false);
   const [showExpHistory, setShowExpHistory] = useState<boolean>(false);
 
@@ -145,7 +154,7 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
       if (sensorDevice.metadata.monitor_active !== undefined) {
         setIsMonitorActive(Boolean(sensorDevice.metadata.monitor_active));
       }
-      if (sensorDevice.metadata.active_experiment !== undefined) {
+      if (propActiveExperiment === undefined && sensorDevice.metadata.active_experiment !== undefined) {
         setActiveExperiment(sensorDevice.metadata.active_experiment || null);
       }
     }

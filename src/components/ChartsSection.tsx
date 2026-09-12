@@ -443,6 +443,8 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                   strokeWidth={3}
                   fillOpacity={1}
                   fill="url(#colorExpDO)"
+                  dot={{ r: 4, fill: '#10b981', stroke: '#064e3b', strokeWidth: 1.5 }}
+                  activeDot={{ r: 6, fill: '#10b981', stroke: '#ffffff', strokeWidth: 2 }}
                 />
 
                 <Line
@@ -453,7 +455,8 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                   unit="°C"
                   stroke="#14b8a6"
                   strokeWidth={2}
-                  dot={false}
+                  dot={{ r: 3, fill: '#14b8a6', stroke: '#0f766e', strokeWidth: 1 }}
+                  activeDot={{ r: 5, fill: '#14b8a6', stroke: '#ffffff', strokeWidth: 2 }}
                 />
               </AreaChart>
             ) : (

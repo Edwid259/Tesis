@@ -170,6 +170,7 @@ export interface DashboardSummaryResponse {
   latestSensorReading: SensorReading | null;
   latestMotorTelemetry: MotorTelemetry | null;
   latestEscTelemetry?: MotorTelemetry | null;
+  activeExperiment?: Experiment | null;
   thresholds: SystemThresholds;
   activeAlertsCount: number;
   systemHealth: 'optimal' | 'warning' | 'critical' | 'offline';

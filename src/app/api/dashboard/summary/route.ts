@@ -7,9 +7,10 @@ import {
   getDemoLatestSensorReading,
   getDemoLatestMotorTelemetry,
   getDemoLatestEscTelemetry,
-  demoThresholds
+  demoThresholds,
+  demoExperiments
 } from '@/lib/demoData';
-import { DashboardSummaryResponse, Device } from '@/types';
+import { DashboardSummaryResponse, Device, Experiment } from '@/types';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -37,6 +38,7 @@ export async function GET(req: NextRequest) {
   try {
     if (!isSupabaseConfigured()) {
       // Retornar datos demo simulados en modo local/demo
+      const demoActiveExp = (demoExperiments as Experiment[]).find(e => e.status === 'active') || null;
       const summary: DashboardSummaryResponse = {
         sensorDevice: demoSensorDevice,
         motorDevice: demoMotorDevice,
@@ -44,6 +46,7 @@ export async function GET(req: NextRequest) {
         latestSensorReading: getDemoLatestSensorReading(),
         latestMotorTelemetry: getDemoLatestMotorTelemetry(),
         latestEscTelemetry: getDemoLatestEscTelemetry(),
+        activeExperiment: demoActiveExp,
         thresholds: demoThresholds,
         activeAlertsCount: 1,
         systemHealth: 'optimal',
@@ -231,6 +234,23 @@ export async function GET(req: NextRequest) {
       systemHealth = 'offline';
     }
 
+    // 7. Obtener experimento activo desde la fuente canónica (system_settings -> experiments_registry)
+    let activeExperiment: Experiment | null = null;
+    const { data: settingRow } = await supabaseAdmin
+      .from('system_settings')
+      .select('value')
+      .eq('key', 'experiments_registry')
+      .maybeSingle();
+
+    if (settingRow && Array.isArray(settingRow.value)) {
+      activeExperiment = settingRow.value.find((e: Experiment) => e.status === 'active') || null;
+    }
+
+    // Fallback a metadata de sensor si no se encontró en el registro
+    if (!activeExperiment && sensorDevice?.metadata?.active_experiment) {
+      activeExperiment = sensorDevice.metadata.active_experiment;
+    }
+
     const summary: DashboardSummaryResponse = {
       sensorDevice,
       motorDevice,
@@ -238,6 +258,7 @@ export async function GET(req: NextRequest) {
       latestSensorReading,
       latestMotorTelemetry,
       latestEscTelemetry,
+      activeExperiment,
       thresholds: demoThresholds,
       activeAlertsCount: activeAlertsCount || 0,
       systemHealth,
