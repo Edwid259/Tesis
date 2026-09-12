@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -38,6 +38,21 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
   const [showDO, setShowDO] = useState<boolean>(true);
   const [showSpeed, setShowSpeed] = useState<boolean>(true);
   const [showTemp, setShowTemp] = useState<boolean>(true);
+
+  // Filtrar estrictamente los datos para la gráfica del experimento
+  // Comienza limpio desde activeExperiment.started_at (t = 0)
+  const experimentData = useMemo(() => {
+    if (!activeExperiment || !activeExperiment.started_at) {
+      return [];
+    }
+    const startMs = new Date(activeExperiment.started_at).getTime();
+    const endMs = activeExperiment.ended_at ? new Date(activeExperiment.ended_at).getTime() : Infinity;
+
+    return history.filter(p => {
+      const t = new Date(p.timestamp).getTime();
+      return t >= startMs && t <= endMs;
+    });
+  }, [history, activeExperiment]);
 
   // Auto-transición a vista de experimento cuando se inicia uno nuevo
   useEffect(() => {
@@ -235,6 +250,22 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
             <ChartIcon className="w-8 h-8 text-slate-600" />
             <p className="text-sm font-medium">Sin datos históricos para este rango</p>
           </div>
+        ) : activeTab === 'experiment' && experimentData.length === 0 ? (
+          <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-3">
+            <div className="p-3.5 rounded-2xl bg-emerald-950/50 border border-emerald-800/80 text-emerald-400 shadow-xl shadow-emerald-950/40">
+              <FlaskConical className={`w-8 h-8 ${activeExperiment ? 'animate-bounce text-emerald-400' : 'text-slate-500'}`} />
+            </div>
+            <div className="text-center space-y-1 max-w-md px-4">
+              <h4 className="font-bold text-slate-200 text-sm">
+                {activeExperiment ? `Experimento activo: ${activeExperiment.name}` : 'No hay ningún experimento en curso'}
+              </h4>
+              <p className="text-xs text-slate-400">
+                {activeExperiment
+                  ? `Esperando las primeras muestras del sensor (${activeExperiment.csv_filename} cada ${activeExperiment.sampling_rate_sec}s). La gráfica arrancará limpia desde este instante.`
+                  : 'Inicie un ensayo desde la sección de Experimentos en el panel de control del sensor para visualizar las curvas en tiempo real.'}
+              </p>
+            </div>
+          </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
             {activeTab === 'combined' ? (
@@ -370,8 +401,8 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                 />
               </AreaChart>
             ) : activeTab === 'experiment' ? (
-              // 3. GRÁFICA EN VIVO DEL EXPERIMENTO
-              <AreaChart data={history} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+              // 3. GRÁFICA EN VIVO DEL EXPERIMENTO (Solo lecturas del experimento actual)
+              <AreaChart data={experimentData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorExpDO" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#10b981" stopOpacity={0.6} />

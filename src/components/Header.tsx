@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Activity, Wifi, WifiOff, RefreshCw, Layers, ShieldCheck } from 'lucide-react';
+import { Activity, Wifi, WifiOff, RefreshCw, Layers, ShieldCheck, Trash2 } from 'lucide-react';
 import { Device } from '@/types';
 
 interface HeaderProps {
@@ -12,6 +12,7 @@ interface HeaderProps {
   isLoading: boolean;
   onRefresh: () => void;
   lastUpdatedText: string;
+  onOpenClearModal?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -21,7 +22,8 @@ export const Header: React.FC<HeaderProps> = ({
   isLive,
   isLoading,
   onRefresh,
-  lastUpdatedText
+  lastUpdatedText,
+  onOpenClearModal
 }) => {
   const isSensorOnline = sensorDevice?.status === 'online';
   const isMotorOnline = motorDevice?.status === 'online';
@@ -93,8 +95,19 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Botón de Refresco Manual y Estado */}
+        {/* Botones de Acción: Refresco Manual y Limpieza BD */}
         <div className="flex items-center gap-2">
+          {onOpenClearModal && (
+            <button
+              onClick={onOpenClearModal}
+              title="Limpieza granular de base de datos"
+              className="flex items-center gap-1.5 bg-rose-950/40 hover:bg-rose-900/60 active:scale-95 transition-all text-rose-300 hover:text-rose-200 px-2.5 py-1.5 rounded-lg border border-rose-800/60 text-xs font-medium"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+              <span className="hidden sm:inline">Limpiar BD</span>
+            </button>
+          )}
+
           <button
             onClick={onRefresh}
             disabled={isLoading}

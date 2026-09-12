@@ -22,7 +22,8 @@ import {
   FileSpreadsheet,
   ChevronDown,
   ChevronUp,
-  Sparkles
+  Sparkles,
+  Trash2
 } from 'lucide-react';
 import { Device, SensorCommandAction, SensorCommandPayload, Experiment } from '@/types';
 import { demoExperiments } from '@/lib/demoData';
@@ -100,6 +101,9 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
         setExperiments(expList);
         const running = expList.find(e => e.status === 'active') || null;
         setActiveExperiment(running);
+        if (running) {
+          onExperimentStarted?.(running);
+        }
       }
     } catch {
       setExperiments(demoExperiments as Experiment[]);
@@ -338,6 +342,36 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const handleDeleteExperiment = async (expId: string, expName: string) => {
+    const confirmDelete = window.confirm(
+      `¿Deseas eliminar el experimento '${expName}'?\n\nSe eliminará del registro y se purgarán sus mediciones asociadas en la base de datos.`
+    );
+    if (!confirmDelete) return;
+
+    try {
+      const res = await fetch(`/api/experiments/${expId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ delete_readings: true })
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Error al eliminar experimento');
+      }
+
+      showFeedback('success', `Experimento '${expName}' eliminado exitosamente.`);
+      if (activeExperiment?.id === expId) {
+        setActiveExperiment(null);
+        onExperimentStopped?.();
+      }
+      fetchExperiments();
+      onCommandSent();
+    } catch (err: any) {
+      showFeedback('error', err.message || 'Error eliminando experimento');
+    }
   };
 
   // Formateador de tiempo transcurrido HH:MM:SS
@@ -896,13 +930,23 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
                       <span className="text-[10px] text-slate-500">
                         {exp.total_samples > 0 ? `${exp.total_samples} muestras` : 'Datos listos'}
                       </span>
-                      <button
-                        onClick={() => handleDownloadCsv(exp.id, exp.csv_filename)}
-                        className="flex items-center gap-1 text-[11px] font-semibold text-cyan-400 hover:text-cyan-300 transition-colors"
-                      >
-                        <Download className="w-3 h-3" />
-                        <span>Descargar CSV</span>
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleDownloadCsv(exp.id, exp.csv_filename)}
+                          className="flex items-center gap-1 text-[11px] font-semibold text-cyan-400 hover:text-cyan-300 transition-colors"
+                          title="Descargar mediciones CSV"
+                        >
+                          <Download className="w-3 h-3" />
+                          <span>CSV</span>
+                        </button>
+                        <button
+                          onClick={() => handleDeleteExperiment(exp.id, exp.name)}
+                          className="flex items-center gap-1 text-[11px] font-semibold text-rose-400/70 hover:text-rose-300 hover:bg-rose-950/40 p-1 rounded transition-colors"
+                          title="Eliminar este experimento y sus mediciones"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}

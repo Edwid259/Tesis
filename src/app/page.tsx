@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Header } from '@/components/Header';
 import { MetricCards } from '@/components/MetricCards';
 import { SensorControlPanel } from '@/components/SensorControlPanel';
+import { ClearDatabaseModal } from '@/components/ClearDatabaseModal';
 import { MotorControlPanel } from '@/components/MotorControlPanel';
 import { EscT200ControlPanel } from '@/components/EscT200ControlPanel';
 import { ChartsSection } from '@/components/ChartsSection';
@@ -53,6 +54,7 @@ export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [lastUpdated, setLastUpdated] = useState<string>('Recién cargado');
   const [activeExperiment, setActiveExperiment] = useState<Experiment | null>(null);
+  const [showClearDbModal, setShowClearDbModal] = useState<boolean>(false);
 
   // Función principal para cargar datos de la dashboard
   const fetchDashboardData = useCallback(async (isBackground: boolean = false) => {
@@ -99,16 +101,17 @@ export default function DashboardPage() {
     }
   }, [selectedRange, history.length]);
 
-  // Carga inicial y actualización automática cada 15 segundos
+  // Carga inicial y actualización periódica (acelerada a 4s durante experimento activo, 15s en reposo)
   useEffect(() => {
     fetchDashboardData(false);
 
+    const pollIntervalMs = activeExperiment ? 4000 : 15000;
     const interval = setInterval(() => {
       fetchDashboardData(true);
-    }, 15000); // 15s refresh interval
+    }, pollIntervalMs);
 
     return () => clearInterval(interval);
-  }, [fetchDashboardData]);
+  }, [fetchDashboardData, activeExperiment]);
 
   // Acción para resolver o reconocer alertas
   const handleAcknowledgeAlert = async (alertId: number, newStatus: 'reconocida' | 'resuelta') => {
@@ -138,6 +141,7 @@ export default function DashboardPage() {
         isLoading={isLoading}
         onRefresh={() => fetchDashboardData(false)}
         lastUpdatedText={lastUpdated}
+        onOpenClearModal={() => setShowClearDbModal(true)}
       />
 
       {/* Contenedor Principal */}
@@ -243,6 +247,13 @@ export default function DashboardPage() {
           <span>Vercel Edge Ready</span>
         </div>
       </footer>
+
+      {/* Modal de Limpieza Granular de Base de Datos */}
+      <ClearDatabaseModal
+        isOpen={showClearDbModal}
+        onClose={() => setShowClearDbModal(false)}
+        onSuccess={() => fetchDashboardData(false)}
+      />
     </div>
   );
 }
