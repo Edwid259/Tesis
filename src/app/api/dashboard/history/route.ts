@@ -103,13 +103,14 @@ export async function GET(req: NextRequest) {
       });
     });
 
-    // Añadir telemetría de Aireador ODrive S1 al punto temporal más cercano o nuevo
+    // Añadir telemetría de Aireador ODrive S1 al punto temporal más cercano o nuevo (Escala 0 a 600 RPM, sin PWM)
     motorData?.forEach(m => {
       const date = new Date(m.recorded_at);
-      const rpmVal = m.pwm_us !== undefined && m.pwm_us !== null ? Number(m.pwm_us) : Math.round((Number(m.speed_percent) / 100) * 3500);
+      const isMotorRunning = Boolean(m.is_on) && Number(m.speed_percent) > 0;
+      const rpmVal = !isMotorRunning ? 0 : Math.round((Number(m.speed_percent) / 100) * 600);
       const existing = historyPoints.find(p => Math.abs(new Date(p.timestamp).getTime() - date.getTime()) < 30000);
       if (existing) {
-        existing.motor_speed_percent = Number(m.speed_percent);
+        existing.motor_speed_percent = isMotorRunning ? Number(m.speed_percent) : 0;
         existing.odrive_rpm = rpmVal;
         existing.motor_is_on = Boolean(m.is_on);
         existing.motor_power_w = m.power_w ? Number(m.power_w) : undefined;
@@ -117,7 +118,7 @@ export async function GET(req: NextRequest) {
         historyPoints.push({
           timestamp: m.recorded_at,
           timeLabel: formatLabel(date),
-          motor_speed_percent: Number(m.speed_percent),
+          motor_speed_percent: isMotorRunning ? Number(m.speed_percent) : 0,
           odrive_rpm: rpmVal,
           motor_is_on: Boolean(m.is_on),
           motor_power_w: m.power_w ? Number(m.power_w) : undefined

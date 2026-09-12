@@ -48,8 +48,8 @@ export const MotorControlPanel: React.FC<MotorControlPanelProps> = ({
 
   // Consigna permanece bajo control del operador (sin reseteo automatico por parpadeos de red)
 
-  // Cálculo de RPM de consigna para comando (0 a 3500 RPM)
-  const commandRpm = !isOn ? 0 : Math.round((targetSpeed / 100) * 3500);
+  // Cálculo de RPM de consigna para comando (0 a 600 RPM)
+  const commandRpm = !isOn ? 0 : Math.round((targetSpeed / 100) * 600);
 
   // Parada de Emergencia Inmediata
   const handleEmergencyStop = async () => {
@@ -303,7 +303,7 @@ export const MotorControlPanel: React.FC<MotorControlPanelProps> = ({
             </div>
 
             <div className="flex justify-between text-[11px] text-slate-400">
-              <span>Rango FOC: <strong className="text-slate-400">0 – 3500 RPM</strong></span>
+              <span>Rango FOC: <strong className="text-slate-400">0 – 600 RPM</strong></span>
               <span>Consigna a Enviar: <strong className="text-amber-400 font-bold">{commandRpm} RPM ({isOn ? targetSpeed : 0}%)</strong></span>
             </div>
           </div>

@@ -139,7 +139,7 @@ export function generateDemoHistory(hours: number = 24): HistoryDataPoint[] {
       water_temperature_c: formattedTemp,
       battery_v: Number((4.2 - (i / totalPoints) * 0.05).toFixed(2)),
       motor_speed_percent: speed,
-      odrive_rpm: Math.round((speed / 100) * 3500),
+      odrive_rpm: Math.round((speed / 100) * 600),
       motor_is_on: speed > 0,
       motor_power_w: speed > 0 ? Number((speed * 1.95 + (Math.random() * 5)).toFixed(1)) : 0
     });
@@ -207,7 +207,7 @@ export const demoAlerts: Alert[] = [
 export const demoExperiments = [
   {
     id: 'exp_demo_01',
-    name: 'Ensayo Curva Reoxigenación ODrive (3500 RPM)',
+    name: 'Ensayo Curva Reoxigenación ODrive (600 RPM)',
     description: 'Evaluación de tasa de transferencia de oxígeno kLa con motor a 100% de aceleración.',
     sampling_rate_sec: 2,
     csv_filename: 'EXP_01.CSV',
@@ -218,7 +218,7 @@ export const demoExperiments = [
     min_do: 4.12,
     max_do: 8.45,
     avg_do: 6.85,
-    metadata: { controller: 'ODrive S1', rpm: 3500 }
+    metadata: { controller: 'ODrive S1', rpm: 600 }
   },
   {
     id: 'exp_demo_02',

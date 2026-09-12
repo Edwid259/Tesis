@@ -17,9 +17,9 @@ let motorState = {
 
 async function sendSensorReading() {
   // Simulación de lectura con valores en la escala de microcontrolador
-  // Oxígeno disuelto ~7.8 mg/L -> 7800..8100 centi_mg_l
+  // Oxígeno disuelto ~7.8 mg/L -> 7800..8100 milli_mg_l
   const baseDO = 7.8 + (Math.random() * 0.4 - 0.2);
-  const doCenti = Math.round(baseDO * 1000);
+  const doMilli = Math.round(baseDO * 1000);
   const tempCenti = Math.round((23.0 + Math.random() * 0.5) * 100);
   const satDeci = Math.round((baseDO * 12.5) * 10);
   const batteryMv = Math.round((4.2 - Math.random() * 0.1) * 1000);
@@ -28,7 +28,7 @@ async function sendSensorReading() {
     datetime: new Date().toISOString(),
     seconds_since_2000: Math.floor((Date.now() - new Date('2000-01-01').getTime()) / 1000),
     water_temp_centi: tempCenti,
-    do_centi_mg_l: doCenti,
+    do_milli_mg_l: doMilli,
     do_sat_deci_pct: satDeci,
     param3_centi: 1024,
     param4_centi: 2048,

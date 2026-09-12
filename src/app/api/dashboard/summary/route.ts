@@ -156,12 +156,12 @@ export async function GET(req: NextRequest) {
 
     const motorDevice = evaluateDeviceStatus(rawMotor ? { ...rawMotor, last_seen_at: motorLastSeen } : null);
 
-    if (latestMotorTelemetry && motorDevice?.status === 'offline') {
+    if (latestMotorTelemetry && (motorDevice?.status === 'offline' || !latestMotorTelemetry.is_on)) {
       latestMotorTelemetry = {
         ...latestMotorTelemetry,
         is_on: false,
         speed_percent: 0,
-        power_w: 0
+        power_w: motorDevice?.status === 'offline' ? 0 : (latestMotorTelemetry.power_w ?? 0)
       };
     }
 

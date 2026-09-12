@@ -40,8 +40,9 @@ export const MetricCards: React.FC<MetricCardsProps> = ({
   const tempVal = reading?.water_temperature_c ?? 0;
   const batteryV = reading?.battery_v ?? 0;
 
-  const isMotorOn = isMotorOnline && (motor?.is_on ?? false);
-  const motorSpeed = isMotorOnline ? (motor?.speed_percent ?? 0) : 0;
+  const isMotorOn = isMotorOnline && Boolean(motor?.is_on);
+  const motorSpeed = isMotorOn ? (motor?.speed_percent ?? 0) : 0;
+  const calculatedRpm = Math.round((motorSpeed / 100) * 600);
   const motorPwm = isMotorOnline ? (motor?.pwm_us ?? 1500) : 1500;
   const motorPower = isMotorOnline ? (motor?.power_w ?? (motorSpeed > 0 ? (motorSpeed * 1.9).toFixed(1) : 0)) : 0;
 
@@ -212,7 +213,7 @@ export const MetricCards: React.FC<MetricCardsProps> = ({
             <span className="text-sm text-slate-400">%</span>
           </div>
           <p className="text-[11px] text-blue-400/80 mt-0.5">
-            {isMotorOnline ? `RPM: ${Math.round((motorSpeed / 100) * 3500)}` : 'Sin conexión'}
+            {isMotorOnline ? (isMotorOn ? `RPM: ${calculatedRpm}` : '0 RPM (En reposo)') : 'Sin conexión'}
           </p>
         </div>
         <div className="text-[10px] text-slate-500">

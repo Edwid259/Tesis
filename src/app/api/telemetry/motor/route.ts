@@ -21,54 +21,72 @@ export const dynamic = 'force-dynamic';
 export async function POST(req: NextRequest) {
   // 1. Autenticar dispositivo mediante X-Device-Key
   const { device, errorResponse } = await authenticateDevice(req, 'motor_thruster');
-  if (errorResponse) return errorResponse;
+  if (errorResponse || !device) return errorResponse ?? NextResponse.json({ error: 'Dispositivo no autorizado' }, { status: 401 });
 
   try {
     const body = await req.json();
 
-    const {
-      datetime,
-      is_on = false,
-      speed_percent = 0,
-      pwm_us = 1500,
-      voltage_v,
-      current_a,
-      power_w,
-      status_code = 0
-    } = body;
+    const rawList = Array.isArray(body.samples) && body.samples.length > 0 
+      ? body.samples 
+      : [body];
 
-    const recordedAt = datetime ? new Date(datetime).toISOString() : new Date().toISOString();
+    const rowsToInsert = rawList.map((item: any) => {
+      const is_on = Boolean(item.is_on);
+      const speed_percent = Number(item.speed_percent ?? 0);
+      const pwm_us = item.pwm_us !== undefined ? Number(item.pwm_us) : 1500;
+      const voltage_v = item.voltage_v !== undefined ? Number(item.voltage_v) : null;
+      const current_a = item.current_a !== undefined ? Number(item.current_a) : null;
+      const power_w = item.power_w !== undefined 
+        ? Number(item.power_w) 
+        : (voltage_v && current_a ? Number((voltage_v * current_a).toFixed(2)) : null);
+      const status_code = Number(item.status_code ?? 0);
+      const recordedAt = item.datetime ? new Date(item.datetime).toISOString() : new Date().toISOString();
+
+      return {
+        device_id: device.id,
+        recorded_at: recordedAt,
+        is_on,
+        speed_percent,
+        pwm_us,
+        voltage_v,
+        current_a,
+        power_w,
+        status_code
+      };
+    });
+
+    const latest = rowsToInsert[rowsToInsert.length - 1];
 
     // Si Supabase está configurado, guardar en PostgreSQL
     if (isSupabaseConfigured() && device) {
       const { error: insertError } = await supabaseAdmin
         .from('motor_telemetry')
-        .insert({
-          device_id: device.id,
-          recorded_at: recordedAt,
-          is_on: Boolean(is_on),
-          speed_percent: Number(speed_percent),
-          pwm_us: Number(pwm_us),
-          voltage_v: voltage_v !== undefined ? Number(voltage_v) : null,
-          current_a: current_a !== undefined ? Number(current_a) : null,
-          power_w: power_w !== undefined ? Number(power_w) : (voltage_v && current_a ? Number((voltage_v * current_a).toFixed(2)) : null),
-          status_code: Number(status_code)
-        });
+        .insert(rowsToInsert);
 
       if (insertError) {
         console.error('Error guardando telemetría de motor:', insertError);
         return NextResponse.json({ error: 'Error al persistir telemetría de motor' }, { status: 500 });
       }
+
+      await supabaseAdmin
+        .from('devices')
+        .update({
+          status: 'online',
+          last_seen_at: latest.recorded_at,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', device.id);
     }
 
     return NextResponse.json({
       success: true,
       message: 'Telemetría de motor recibida correctamente',
       data: {
-        recorded_at: recordedAt,
-        is_on,
-        speed_percent,
-        pwm_us
+        recorded_at: latest.recorded_at,
+        is_on: latest.is_on,
+        speed_percent: latest.speed_percent,
+        pwm_us: latest.pwm_us,
+        samples_count: rowsToInsert.length
       }
     });
 

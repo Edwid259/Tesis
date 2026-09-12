@@ -266,7 +266,7 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                   yAxisId="right"
                   orientation="right"
                   stroke="#3b82f6"
-                  domain={[0, 3500]}
+                  domain={[0, 600]}
                   tick={{ fontSize: 11 }}
                   unit=" RPM"
                 />
@@ -436,7 +436,7 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" opacity={0.6} />
                 <XAxis dataKey="timeLabel" stroke="#64748b" tick={{ fontSize: 11 }} />
-                <YAxis stroke="#3b82f6" domain={[0, 3500]} tick={{ fontSize: 11 }} unit=" RPM" />
+                <YAxis stroke="#3b82f6" domain={[0, 600]} tick={{ fontSize: 11 }} unit=" RPM" />
                 <Tooltip content={<CustomTooltip />} />
 
                 <Area

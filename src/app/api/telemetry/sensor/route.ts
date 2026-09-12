@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic';
  *   "datetime": "2026-08-31T15:00:00Z",
  *   "seconds_since_2000": 841500000,
  *   "water_temp_centi": 2305,
- *   "do_centi_mg_l": 7874,
+ *   "do_milli_mg_l": 7874,
  *   "do_sat_deci_pct": 985,
  *   "param3_centi": 1024,
  *   "param4_centi": 2048,
@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
       datetime,
       seconds_since_2000,
       water_temp_centi,
-      do_centi_mg_l,
+      do_milli_mg_l,
       do_sat_deci_pct,
       param3_centi,
       param4_centi,
@@ -44,9 +44,9 @@ export async function POST(req: NextRequest) {
       sent = true
     } = body;
 
-    if (do_centi_mg_l === undefined || water_temp_centi === undefined) {
+    if (do_milli_mg_l === undefined || water_temp_centi === undefined) {
       return NextResponse.json(
-        { error: 'Faltan campos obligatorios: do_centi_mg_l o water_temp_centi' },
+        { error: 'Faltan campos obligatorios: do_milli_mg_l o water_temp_centi' },
         { status: 400 }
       );
     }
@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
     const satDivider = 10.0;     // 985 -> 98.5%
     const batteryDivider = 1000.0; // 4246 -> 4.246 V
 
-    const dissolvedOxygenMgL = Number((do_centi_mg_l / doDivider).toFixed(3));
+    const dissolvedOxygenMgL = Number((do_milli_mg_l / doDivider).toFixed(3));
     const waterTempC = Number((water_temp_centi / tempDivider).toFixed(2));
     const oxygenSatPct = do_sat_deci_pct !== undefined ? Number((do_sat_deci_pct / satDivider).toFixed(2)) : null;
     const batteryV = battery_mv !== undefined ? Number((battery_mv / batteryDivider).toFixed(2)) : null;
@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
           device_id: device.id,
           recorded_at: recordedAt,
           seconds_since_2000,
-          dissolved_oxygen_raw: do_centi_mg_l,
+          dissolved_oxygen_raw: do_milli_mg_l,
           dissolved_oxygen_mg_l: dissolvedOxygenMgL,
           oxygen_saturation_raw: do_sat_deci_pct,
           oxygen_saturation_pct: oxygenSatPct,

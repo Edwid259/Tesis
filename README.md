@@ -90,7 +90,7 @@ Todos los microcontroladores se comunican mediante peticiones HTTPS seguras incl
   "datetime": "2026-09-06T15:00:00Z",
   "seconds_since_2000": 842048000,
   "water_temp_centi": 2305,
-  "do_centi_mg_l": 7874,
+  "do_milli_mg_l": 7874,
   "do_sat_deci_pct": 985,
   "param3_centi": 0,
   "param4_centi": 0,

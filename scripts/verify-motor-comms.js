@@ -11,7 +11,7 @@ const DEVICES = {
     key: 'ESP32_MOTOR_KEY_2026',
     model: 'ODrive S1 (M8325s)',
     protocol: 'UART ASCII',
-    speedUnit: 'RPM (0 - 3500)'
+    speedUnit: 'RPM (0 - 600)'
   },
   ESC: {
     id: 'c0000000-0000-0000-0000-000000000003',
@@ -36,13 +36,13 @@ console.log('  ✓ ESC T-200 ID:', DEVICES.ESC.id, '| Key:', DEVICES.ESC.key);
 // Test 2: Conversión y Calibración de Comandos ODrive S1 (RPM)
 console.log('\n[Test 2] Verificando comandos para ODrive S1 (M8325s)...');
 function computeODriveRpm(throttlePct) {
-  return Math.round((Math.max(0, Math.min(100, throttlePct)) / 100) * 3500);
+  return Math.round((Math.max(0, Math.min(100, throttlePct)) / 100) * 600);
 }
 assert.strictEqual(computeODriveRpm(0), 0, '0% debe dar 0 RPM');
-assert.strictEqual(computeODriveRpm(50), 1750, '50% debe dar 1750 RPM');
-assert.strictEqual(computeODriveRpm(65), 2275, '65% debe dar 2275 RPM');
-assert.strictEqual(computeODriveRpm(100), 3500, '100% debe dar 3500 RPM');
-console.log('  ✓ Consignas ODrive calculadas correctamente: 0% -> 0 RPM, 65% -> 2275 RPM, 100% -> 3500 RPM');
+assert.strictEqual(computeODriveRpm(50), 300, '50% debe dar 300 RPM');
+assert.strictEqual(computeODriveRpm(65), 390, '65% debe dar 390 RPM');
+assert.strictEqual(computeODriveRpm(100), 600, '100% debe dar 600 RPM');
+console.log('  ✓ Consignas ODrive calculadas correctamente: 0% -> 0 RPM, 50% -> 300 RPM, 65% -> 390 RPM, 100% -> 600 RPM');
 
 // Test 3: Conversión y Calibración de Comandos ESC T-200 (PWM Microsegundos)
 console.log('\n[Test 3] Verificando comandos para ESC T-200 (PWM Microsegundos)...');
