@@ -97,16 +97,20 @@ export async function POST(req: NextRequest) {
     };
 
     if (isSupabaseConfigured()) {
-      // Guardar comando en cola
-      await supabaseAdmin.from('control_commands').insert({
+      // Guardar comando en cola con fallback si no existe columna payload
+      const baseCmd = {
         device_id: targetDeviceId,
         command_type: 'start',
         speed_percent: 0,
         pwm_us: 1500,
-        payload: commandPayload,
         status: 'pending',
-        requested_by: `Experimento: ${newExperiment.name}`
-      });
+        requested_by: `Experimento (${commandPayload.action})`,
+        error_message: JSON.stringify(commandPayload)
+      };
+      const resWithPayload = await supabaseAdmin.from('control_commands').insert({ ...baseCmd, payload: commandPayload });
+      if (resWithPayload.error) {
+        await supabaseAdmin.from('control_commands').insert(baseCmd);
+      }
 
       // Actualizar metadatos de sensor para indicar experimento activo
       const { data: dev } = await supabaseAdmin
@@ -180,16 +184,20 @@ export async function PATCH(req: NextRequest) {
     };
 
     if (isSupabaseConfigured()) {
-      // 1. Enviar orden stop al sensor
-      await supabaseAdmin.from('control_commands').insert({
+      // 1. Enviar orden stop al sensor con fallback si no existe columna payload
+      const baseStopCmd = {
         device_id: targetDeviceId,
         command_type: 'stop',
         speed_percent: 0,
         pwm_us: 1500,
-        payload: stopPayload,
         status: 'pending',
-        requested_by: 'Detención de Experimento'
-      });
+        requested_by: 'Experimento (stop_experiment)',
+        error_message: JSON.stringify(stopPayload)
+      };
+      const resStopWithPayload = await supabaseAdmin.from('control_commands').insert({ ...baseStopCmd, payload: stopPayload });
+      if (resStopWithPayload.error) {
+        await supabaseAdmin.from('control_commands').insert(baseStopCmd);
+      }
 
       // 2. Actualizar metadatos de sensor
       const { data: dev } = await supabaseAdmin

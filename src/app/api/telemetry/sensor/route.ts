@@ -142,10 +142,39 @@ export async function POST(req: NextRequest) {
         .limit(1);
 
       if (cmdRows && cmdRows.length > 0) {
+        let payload = cmdRows[0].payload;
+        // Si no vino en columna payload, revisar si fue serializado en error_message
+        if (!payload || typeof payload !== 'object' || Object.keys(payload).length === 0) {
+          if (cmdRows[0].error_message && typeof cmdRows[0].error_message === 'string' && cmdRows[0].error_message.trim().startsWith('{')) {
+            try {
+              payload = JSON.parse(cmdRows[0].error_message);
+            } catch {}
+          }
+        }
+
+        if (!payload || typeof payload !== 'object' || Object.keys(payload).length === 0) {
+          let action = cmdRows[0].command_type;
+          const reqBy = cmdRows[0].requested_by || '';
+          const match = reqBy.match(/\(([^)]+)\)/);
+          if (match && match[1]) {
+            action = match[1];
+          } else if (cmdRows[0].command_type === 'start') {
+            action = 'start_monitor';
+          } else if (cmdRows[0].command_type === 'stop') {
+            action = 'stop_monitor';
+          }
+          payload = { action, interval_sec: 5 };
+        } else if (!payload.action) {
+          if (cmdRows[0].command_type === 'start') payload.action = 'start_monitor';
+          else if (cmdRows[0].command_type === 'stop') payload.action = 'stop_monitor';
+          else payload.action = cmdRows[0].command_type;
+          if (!payload.interval_sec) payload.interval_sec = 5;
+        }
+
         pendingCommand = {
           id: cmdRows[0].id,
           command_type: cmdRows[0].command_type,
-          payload: cmdRows[0].payload || {},
+          payload,
           created_at: cmdRows[0].created_at
         };
         // Marcar como sent

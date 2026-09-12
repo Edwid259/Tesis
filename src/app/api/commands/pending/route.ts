@@ -32,8 +32,8 @@ export async function GET(req: NextRequest) {
       .order('created_at', { ascending: false })
       .limit(1);
 
-    // 2. Si no encontro con device_id exacto y es un motor, buscar comando pendiente global
-    if ((!commands || commands.length === 0) && device.type === 'motor_thruster') {
+    // 2. Si no encontro con device_id exacto, buscar comando pendiente global correspondiente
+    if (!commands || commands.length === 0) {
       const fallbackQuery = await supabaseAdmin
         .from('control_commands')
         .select('*')
@@ -42,7 +42,14 @@ export async function GET(req: NextRequest) {
         .limit(1);
 
       if (fallbackQuery.data && fallbackQuery.data.length > 0) {
-        commands = fallbackQuery.data;
+        const candidate = fallbackQuery.data[0];
+        const isSensorCmd = candidate.payload?.action?.includes('monitor') || 
+                            candidate.payload?.action?.includes('experiment') ||
+                            candidate.payload?.action?.includes('sample') ||
+                            ['start', 'stop'].includes(candidate.command_type);
+        if ((device.type === 'sensor_do' && isSensorCmd) || (device.type === 'motor_thruster' && !isSensorCmd)) {
+          commands = [candidate];
+        }
       }
     }
 
@@ -59,6 +66,36 @@ export async function GET(req: NextRequest) {
     }
 
     const command = commands[0];
+
+    // Normalizar payload para que firmware reciba action e interval_sec claros
+    let payload = command.payload;
+    // Si no vino en columna payload, revisar si fue serializado en error_message
+    if (!payload || typeof payload !== 'object' || Object.keys(payload).length === 0) {
+      if (command.error_message && typeof command.error_message === 'string' && command.error_message.trim().startsWith('{')) {
+        try {
+          payload = JSON.parse(command.error_message);
+        } catch {}
+      }
+    }
+
+    if (!payload || typeof payload !== 'object' || Object.keys(payload).length === 0) {
+      let action = command.command_type;
+      const reqBy = command.requested_by || '';
+      const match = reqBy.match(/\(([^)]+)\)/);
+      if (match && match[1]) {
+        action = match[1];
+      } else if (command.command_type === 'start') {
+        action = 'start_monitor';
+      } else if (command.command_type === 'stop') {
+        action = 'stop_monitor';
+      }
+      payload = { action, interval_sec: 5 };
+    } else if (!payload.action) {
+      if (command.command_type === 'start') payload.action = 'start_monitor';
+      else if (command.command_type === 'stop') payload.action = 'stop_monitor';
+      else payload.action = command.command_type;
+      if (!payload.interval_sec) payload.interval_sec = 5;
+    }
 
     // Marcar como 'sent' para evitar envios duplicados
     const updateRes = await supabaseAdmin
@@ -81,7 +118,7 @@ export async function GET(req: NextRequest) {
         command_type: command.command_type,
         speed_percent: Number(command.speed_percent),
         pwm_us: command.pwm_us,
-        payload: command.payload || {},
+        payload,
         created_at: command.created_at
       }
     });

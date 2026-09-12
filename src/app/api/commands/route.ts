@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
 
     const isSensorCommand = 
       device_id === 'a0000000-0000-0000-0000-000000000001' || 
-      ['start_monitor', 'stop_monitor', 'set_sampling_rate', 'manual_sample', 'sleep', 'set_sleep_cycle'].includes(payload?.action);
+      ['start_monitor', 'stop_monitor', 'start_experiment', 'stop_experiment', 'set_sampling_rate', 'manual_sample', 'sleep', 'set_sleep_cycle'].includes(payload?.action);
 
     let speed = 0;
     let pwm_us = 1500;
@@ -70,15 +70,38 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Normalizar command_type para satisfacer el constraint de la BD: ('start', 'stop', 'set_speed', 'emergency_stop', 'reboot')
+    const allowedDbTypes = ['start', 'stop', 'set_speed', 'emergency_stop', 'reboot'];
+    let dbCommandType = command_type;
+    if (!allowedDbTypes.includes(dbCommandType)) {
+      if (isSensorCommand) {
+        const act = payload?.action || '';
+        dbCommandType = (act === 'sleep' || act === 'stop_monitor' || act === 'stop_experiment' || command_type === 'stop') 
+          ? 'stop' 
+          : 'start';
+      } else {
+        dbCommandType = 'set_speed';
+      }
+    }
+
+    const effectivePayload = {
+      action: payload?.action || command_type,
+      original_command_type: command_type,
+      ...payload
+    };
+
+    const actionTag = effectivePayload.action || command_type;
+    const reqBy = requested_by.includes('(') ? requested_by : `${requested_by} (${actionTag})`;
+
     // Insertar comando en la cola de control_commands
-    // Nota de robustez: Si la tabla en Supabase no tiene la columna 'payload', omitirla transparentemente
+    // Nota de robustez: Si la tabla en Supabase no tiene la columna 'payload', guardar JSON en error_message (columna TEXT)
     const baseCommand = {
       device_id: targetDeviceId,
-      command_type,
+      command_type: dbCommandType,
       speed_percent: speed,
       pwm_us,
       status: 'pending',
-      requested_by
+      requested_by: reqBy
     };
 
     let cmd: any = null;
@@ -86,15 +109,22 @@ export async function POST(req: NextRequest) {
 
     const resWithPayload = await supabaseAdmin
       .from('control_commands')
-      .insert({ ...baseCommand, payload })
+      .insert({
+        ...baseCommand,
+        payload: effectivePayload,
+        error_message: JSON.stringify(effectivePayload)
+      })
       .select()
       .single();
 
-    if (resWithPayload.error && (resWithPayload.error.code === 'PGRST204' || resWithPayload.error.message?.includes('payload'))) {
-      // Reintentar sin columna payload
+    if (resWithPayload.error) {
+      // Reintentar sin columna payload (guardando el payload serializado en error_message)
       const resWithoutPayload = await supabaseAdmin
         .from('control_commands')
-        .insert(baseCommand)
+        .insert({
+          ...baseCommand,
+          error_message: JSON.stringify(effectivePayload)
+        })
         .select()
         .single();
       cmd = resWithoutPayload.data;
@@ -135,8 +165,14 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: 'Comando emitido exitosamente. En espera de confirmacion por el ESP32.',
-      command: cmd
+      message: isSensorCommand 
+        ? `Comando para sensor registrado con éxito (${effectivePayload.action})`
+        : 'Comando emitido exitosamente. En espera de confirmacion por el ESP32.',
+      command: {
+        ...(cmd || baseCommand),
+        command_type: effectivePayload.original_command_type || cmd?.command_type || dbCommandType,
+        payload: effectivePayload
+      }
     });
 
   } catch (error: any) {
