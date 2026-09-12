@@ -80,13 +80,13 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Si no hay datos en la BD todavía, retornar demo indicando estado
+    // Si la BD está conectada pero no tiene registros aún en este rango, retornar array vacío real
     if ((!sensorData || sensorData.length === 0) && (!motorData || motorData.length === 0)) {
       return NextResponse.json({
         success: true,
         range,
-        data: generateDemoHistory(hours),
-        isDemo: true,
+        data: [],
+        isDemo: false,
         emptyDatabase: true
       });
     }

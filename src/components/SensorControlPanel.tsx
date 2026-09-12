@@ -101,9 +101,6 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
         setExperiments(expList);
         const running = expList.find(e => e.status === 'active') || null;
         setActiveExperiment(running);
-        if (running) {
-          onExperimentStarted?.(running);
-        }
       }
     } catch {
       setExperiments(demoExperiments as Experiment[]);
@@ -133,22 +130,24 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
   }, [activeExperiment]);
 
   // Sincronizar estado cuando los metadatos del sensor llegan o se actualizan desde el servidor
-  const hasInitializedRef = useRef<boolean>(false);
+  const hasInitializedSlidersRef = useRef<boolean>(false);
   useEffect(() => {
-    if (sensorDevice?.metadata && !hasInitializedRef.current) {
+    if (sensorDevice?.metadata) {
+      if (!hasInitializedSlidersRef.current) {
+        if (sensorDevice.metadata.monitor_interval_sec) {
+          setMonitorIntervalSec(Number(sensorDevice.metadata.monitor_interval_sec));
+        }
+        if (sensorDevice.metadata.sleep_cycle_min) {
+          setSleepCycleMin(Number(sensorDevice.metadata.sleep_cycle_min));
+        }
+        hasInitializedSlidersRef.current = true;
+      }
       if (sensorDevice.metadata.monitor_active !== undefined) {
         setIsMonitorActive(Boolean(sensorDevice.metadata.monitor_active));
       }
-      if (sensorDevice.metadata.monitor_interval_sec) {
-        setMonitorIntervalSec(Number(sensorDevice.metadata.monitor_interval_sec));
+      if (sensorDevice.metadata.active_experiment !== undefined) {
+        setActiveExperiment(sensorDevice.metadata.active_experiment || null);
       }
-      if (sensorDevice.metadata.sleep_cycle_min) {
-        setSleepCycleMin(Number(sensorDevice.metadata.sleep_cycle_min));
-      }
-      if (sensorDevice.metadata.active_experiment) {
-        setActiveExperiment(sensorDevice.metadata.active_experiment);
-      }
-      hasInitializedRef.current = true;
     }
   }, [sensorDevice?.metadata]);
 

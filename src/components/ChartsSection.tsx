@@ -245,12 +245,7 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
 
       {/* Contenedor de la Gráfica */}
       <div className="h-[340px] w-full pt-2">
-        {history.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-2">
-            <ChartIcon className="w-8 h-8 text-slate-600" />
-            <p className="text-sm font-medium">Sin datos históricos para este rango</p>
-          </div>
-        ) : activeTab === 'experiment' && experimentData.length === 0 ? (
+        {activeTab === 'experiment' && experimentData.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-3">
             <div className="p-3.5 rounded-2xl bg-emerald-950/50 border border-emerald-800/80 text-emerald-400 shadow-xl shadow-emerald-950/40">
               <FlaskConical className={`w-8 h-8 ${activeExperiment ? 'animate-bounce text-emerald-400' : 'text-slate-500'}`} />
@@ -265,6 +260,11 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                   : 'Inicie un ensayo desde la sección de Experimentos en el panel de control del sensor para visualizar las curvas en tiempo real.'}
               </p>
             </div>
+          </div>
+        ) : history.length === 0 ? (
+          <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-2">
+            <ChartIcon className="w-8 h-8 text-slate-600" />
+            <p className="text-sm font-medium">Sin datos históricos para este rango</p>
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
@@ -370,7 +370,7 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" opacity={0.6} />
                 <XAxis dataKey="timeLabel" stroke="#64748b" tick={{ fontSize: 11 }} />
-                <YAxis stroke="#06b6d4" domain={[2, 12]} tick={{ fontSize: 11 }} unit=" mg/L" />
+                <YAxis stroke="#06b6d4" domain={[0, 12]} tick={{ fontSize: 11 }} unit=" mg/L" />
                 <Tooltip content={<CustomTooltip />} />
                 
                 {/* Umbral Crítico */}
@@ -411,7 +411,7 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" opacity={0.6} />
                 <XAxis dataKey="timeLabel" stroke="#10b981" tick={{ fontSize: 11 }} />
-                <YAxis yAxisId="left" stroke="#10b981" domain={[2, 12]} tick={{ fontSize: 11 }} unit=" mg/L" />
+                <YAxis yAxisId="left" stroke="#10b981" domain={[0, 12]} tick={{ fontSize: 11 }} unit=" mg/L" />
                 <YAxis yAxisId="right" orientation="right" stroke="#14b8a6" domain={[15, 35]} tick={{ fontSize: 11 }} unit=" °C" />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '6px' }} />

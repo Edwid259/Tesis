@@ -96,7 +96,19 @@ export const ClearDatabaseModal: React.FC<ClearDatabaseModalProps> = ({
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Error al limpiar la base de datos');
+      if (!res.ok && res.status !== 207) {
+        throw new Error(data.error || data.message || 'Error al limpiar la base de datos');
+      }
+
+      if (data.details) {
+        const errorEntries = Object.entries(data.details).filter(
+          ([_, val]) => typeof val === 'string' && (val as string).startsWith('Error:')
+        );
+        if (errorEntries.length > 0) {
+          const errList = errorEntries.map(([cat, val]) => `${cat}: ${val}`).join(' | ');
+          throw new Error(`Limpieza con advertencias: ${errList}`);
+        }
+      }
 
       onSuccess();
       onClose();

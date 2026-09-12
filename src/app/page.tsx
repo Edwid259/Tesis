@@ -66,6 +66,9 @@ export default function DashboardPage() {
       if (summaryRes.ok) {
         const summaryData: DashboardSummaryResponse = await summaryRes.json();
         setSummary(summaryData);
+        // Sincronizar reactivamente el experimento activo con el backend
+        const serverActiveExp = summaryData.sensorDevice?.metadata?.active_experiment || null;
+        setActiveExperiment(serverActiveExp);
       }
 
       // 2. Obtener Historial de Gráficas

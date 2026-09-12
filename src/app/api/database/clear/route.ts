@@ -105,6 +105,15 @@ export async function POST(req: NextRequest) {
 
       // 4. Registro Histórico de Experimentos
       if (categories.includes('experiments')) {
+        // Consultar metadata de dispositivo para preservar atributos y detectar experimento activo
+        const { data: dev } = await supabaseAdmin
+          .from('devices')
+          .select('metadata')
+          .eq('id', 'a0000000-0000-0000-0000-000000000001')
+          .maybeSingle();
+
+        const hadActiveExp = Boolean(dev?.metadata?.active_experiment);
+
         if (time_scope === 'all') {
           await supabaseAdmin
             .from('system_settings')
@@ -114,13 +123,35 @@ export async function POST(req: NextRequest) {
               description: 'Registro histórico de experimentos de oxigenación y muestreo'
             });
 
-          // Resetear metadata en dispositivos
+          // Resetear metadata en dispositivos preservando propiedades de hardware
           await supabaseAdmin
             .from('devices')
             .update({
-              metadata: { monitor_active: false, active_experiment: null }
+              metadata: {
+                ...(dev?.metadata || {}),
+                monitor_active: false,
+                active_experiment: null
+              }
             })
             .eq('id', 'a0000000-0000-0000-0000-000000000001');
+
+          // Si había un experimento activo, enviar orden de detención al sensor
+          if (hadActiveExp) {
+            const stopPayload = { action: 'stop_experiment' };
+            const baseStopCmd = {
+              device_id: 'a0000000-0000-0000-0000-000000000001',
+              command_type: 'stop',
+              speed_percent: 0,
+              pwm_us: 1500,
+              status: 'pending',
+              requested_by: 'Limpieza BD (stop_experiment)',
+              error_message: JSON.stringify(stopPayload)
+            };
+            const resStop = await supabaseAdmin.from('control_commands').insert({ ...baseStopCmd, payload: stopPayload });
+            if (resStop.error) {
+              await supabaseAdmin.from('control_commands').insert(baseStopCmd);
+            }
+          }
 
           results['experiments'] = 'Registro de experimentos reseteado totalmente';
         } else {
@@ -144,6 +175,39 @@ export async function POST(req: NextRequest) {
                 value: filtered,
                 description: 'Registro histórico de experimentos de oxigenación y muestreo'
               });
+
+            // Si el experimento activo quedó eliminado por el corte de tiempo, resetearlo
+            const activeStartMs = dev?.metadata?.active_experiment?.started_at
+              ? new Date(dev.metadata.active_experiment.started_at).getTime()
+              : 0;
+
+            if (hadActiveExp && activeStartMs <= cutoffMs) {
+              await supabaseAdmin
+                .from('devices')
+                .update({
+                  metadata: {
+                    ...(dev?.metadata || {}),
+                    monitor_active: false,
+                    active_experiment: null
+                  }
+                })
+                .eq('id', 'a0000000-0000-0000-0000-000000000001');
+
+              const stopPayload = { action: 'stop_experiment' };
+              const baseStopCmd = {
+                device_id: 'a0000000-0000-0000-0000-000000000001',
+                command_type: 'stop',
+                speed_percent: 0,
+                pwm_us: 1500,
+                status: 'pending',
+                requested_by: 'Limpieza BD (stop_experiment)',
+                error_message: JSON.stringify(stopPayload)
+              };
+              const resStop = await supabaseAdmin.from('control_commands').insert({ ...baseStopCmd, payload: stopPayload });
+              if (resStop.error) {
+                await supabaseAdmin.from('control_commands').insert(baseStopCmd);
+              }
+            }
           }
           results['experiments'] = 'Experimentos anteriores al corte eliminados';
         }
@@ -152,12 +216,18 @@ export async function POST(req: NextRequest) {
       results['modo_demo'] = 'Datos en memoria reiniciados (Modo Demo)';
     }
 
+    const hasErrors = Object.values(results).some(val => typeof val === 'string' && val.startsWith('Error:'));
+
     return NextResponse.json({
-      success: true,
-      message: 'Operación de limpieza completada correctamente.',
+      success: !hasErrors,
+      message: hasErrors 
+        ? 'Limpieza completada con advertencias o errores en algunas categorías.'
+        : 'Operación de limpieza completada correctamente.',
       details: results,
       time_scope,
       cutoff: cutoffIso
+    }, {
+      status: hasErrors ? 207 : 200 // 207 Multi-Status para errores parciales
     });
 
   } catch (err: any) {

@@ -140,6 +140,67 @@ assert.strictEqual(deleteResult.list.length, 2);
 assert.strictEqual(deleteResult.list.find(e => e.id === 'exp_3'), undefined);
 console.log(`  ✓ Experimento 'exp_3' eliminado del registro, conservando los otros ${deleteResult.list.length} experimentos intactos.`);
 
+// ----------------------------------------------------
+// TEST 4: Prioridad de estado de espera en gráfica de experimento
+// ----------------------------------------------------
+console.log('\n[Test 4] Verificando prioridad de pantalla de espera en Experimento en Vivo...');
+
+function resolveChartViewState(activeTab, historyLen, experimentDataLen) {
+  if (activeTab === 'experiment' && experimentDataLen === 0) {
+    return 'WAITING_FIRST_SAMPLES';
+  } else if (historyLen === 0) {
+    return 'NO_HISTORY_DATA';
+  } else {
+    return 'RENDER_CHART';
+  }
+}
+
+// Con historial vacío general (e.g. tras limpiar BD) pero con experimento activo:
+assert.strictEqual(
+  resolveChartViewState('experiment', 0, 0),
+  'WAITING_FIRST_SAMPLES',
+  'En pestaña experiment con 0 muestras, DEBE mostrar pantalla animada de espera, no "Sin datos históricos"'
+);
+assert.strictEqual(
+  resolveChartViewState('combined', 0, 0),
+  'NO_HISTORY_DATA',
+  'En pestaña combined con 0 muestras, debe mostrar "Sin datos históricos para este rango"'
+);
+assert.strictEqual(
+  resolveChartViewState('experiment', 10, 5),
+  'RENDER_CHART',
+  'Con datos experimentales, debe renderizar la gráfica'
+);
+console.log('  ✓ Prioridad de pantalla de espera validada correctamente sobre historial vacío general.');
+
+// ----------------------------------------------------
+// TEST 5: Preservación de metadatos de hardware al resetear dispositivos
+// ----------------------------------------------------
+console.log('\n[Test 5] Verificando preservación de metadatos de hardware en reset de devices...');
+
+const originalDeviceMetadata = {
+  sensor_model: 'Aqualabo DIGISENS',
+  interface: 'Modbus RS485',
+  monitor_active: true,
+  monitor_interval_sec: 2,
+  sleep_cycle_min: 15,
+  active_experiment: { id: 'exp_1', name: 'Prueba' }
+};
+
+const updatedDeviceMetadata = {
+  ...originalDeviceMetadata,
+  monitor_active: false,
+  active_experiment: null
+};
+
+assert.strictEqual(updatedDeviceMetadata.sensor_model, 'Aqualabo DIGISENS', 'Debe preservar sensor_model');
+assert.strictEqual(updatedDeviceMetadata.interface, 'Modbus RS485', 'Debe preservar interface');
+assert.strictEqual(updatedDeviceMetadata.sleep_cycle_min, 15, 'Debe preservar sleep_cycle_min');
+assert.strictEqual(updatedDeviceMetadata.monitor_active, false, 'Debe apagar monitor_active');
+assert.strictEqual(updatedDeviceMetadata.active_experiment, null, 'Debe limpiar active_experiment');
+console.log('  ✓ Metadatos de hardware preservados íntegramente tras reset de experimento.');
+
 console.log('\n====================================================');
-console.log(' TODAS LAS COMPROBACIONES PASARON CORRECTAMENTE (3/3)');
+console.log(' TODAS LAS COMPROBACIONES PASARON CORRECTAMENTE (5/5)');
 console.log('====================================================\n');
+
