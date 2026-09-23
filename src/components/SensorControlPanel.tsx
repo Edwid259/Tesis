@@ -140,6 +140,8 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
 
   // Sincronizar estado cuando los metadatos del sensor llegan o se actualizan desde el servidor
   const hasInitializedSlidersRef = useRef<boolean>(false);
+  const isPendingMonitorToggleRef = useRef<boolean>(false);
+
   useEffect(() => {
     if (sensorDevice?.metadata) {
       if (!hasInitializedSlidersRef.current) {
@@ -151,14 +153,14 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
         }
         hasInitializedSlidersRef.current = true;
       }
-      if (sensorDevice.metadata.monitor_active !== undefined) {
+      if (sensorDevice.metadata.monitor_active !== undefined && !isPendingMonitorToggleRef.current && !isSending) {
         setIsMonitorActive(Boolean(sensorDevice.metadata.monitor_active));
       }
       if (propActiveExperiment === undefined && sensorDevice.metadata.active_experiment !== undefined) {
         setActiveExperiment(sensorDevice.metadata.active_experiment || null);
       }
     }
-  }, [sensorDevice?.metadata]);
+  }, [sensorDevice?.metadata, isSending]);
 
   const showFeedback = (type: 'success' | 'error' | 'info', message: string) => {
     if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
@@ -174,7 +176,7 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
     payloadData: Partial<SensorCommandPayload> = {},
     commandType: 'start' | 'stop' | 'set_config' = 'set_config',
     successMsg: string = 'Comando enviado exitosamente'
-  ) => {
+  ): Promise<boolean> => {
     setIsSending(true);
     setActiveAction(action);
     setFeedback({ type: null, message: '' });
@@ -204,8 +206,10 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
         : '';
       showFeedback('success', `${successMsg}${offlineNotice}`);
       onCommandSent();
+      return true;
     } catch (err: any) {
       showFeedback('error', err.message || 'Error de conexión con el servidor');
+      return false;
     } finally {
       setIsSending(false);
       setActiveAction(null);
@@ -216,13 +220,26 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
   const handleToggleMonitor = async (targetActive: boolean) => {
     const action: SensorCommandAction = targetActive ? 'start_monitor' : 'stop_monitor';
     const commandType = targetActive ? 'start' : 'stop';
-    await sendSensorCommand(
-      action,
-      { interval_sec: monitorIntervalSec },
-      commandType,
-      targetActive ? `Modo Monitor iniciado (muestreo cada ${monitorIntervalSec}s)` : 'Modo Monitor detenido'
-    );
     setIsMonitorActive(targetActive);
+    isPendingMonitorToggleRef.current = true;
+
+    try {
+      const ok = await sendSensorCommand(
+        action,
+        { interval_sec: monitorIntervalSec },
+        commandType,
+        targetActive ? `Modo Monitor iniciado (muestreo cada ${monitorIntervalSec}s)` : 'Modo Monitor detenido'
+      );
+      if (!ok) {
+        setIsMonitorActive(!targetActive);
+      }
+    } catch {
+      setIsMonitorActive(!targetActive);
+    } finally {
+      setTimeout(() => {
+        isPendingMonitorToggleRef.current = false;
+      }, 1200);
+    }
   };
 
   const handleUpdateSamplingRate = async (newInterval: number) => {
@@ -373,6 +390,7 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
       showFeedback('success', `Experimento '${expName}' eliminado exitosamente.`);
       if (activeExperiment?.id === expId) {
         setActiveExperiment(null);
+        setIsMonitorActive(false);
         onExperimentStopped?.();
       }
       fetchExperiments();

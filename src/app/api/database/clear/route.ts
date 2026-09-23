@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
+import { demoSensorDevice } from '@/lib/demoData';
 import { ClearCategory, TimeScope } from '@/types';
 
 export const dynamic = 'force-dynamic';
@@ -212,7 +213,41 @@ export async function POST(req: NextRequest) {
           results['experiments'] = 'Experimentos anteriores al corte eliminados';
         }
       }
+
+      // Si se limpian totalmente lecturas o comandos y no hay experimento activo, asegurar que monitor_active no quede huérfano
+      if (time_scope === 'all' && (categories.includes('sensor_readings') || categories.includes('alerts_commands') || categories.includes('experiments'))) {
+        const { data: settingRow } = await supabaseAdmin
+          .from('system_settings')
+          .select('value')
+          .eq('key', 'experiments_registry')
+          .maybeSingle();
+
+        const hasActive = Array.isArray(settingRow?.value) && settingRow.value.some((e: any) => e.status === 'active');
+        if (!hasActive) {
+          const { data: dev } = await supabaseAdmin
+            .from('devices')
+            .select('metadata')
+            .eq('id', 'a0000000-0000-0000-0000-000000000001')
+            .maybeSingle();
+
+          if (dev?.metadata?.monitor_active) {
+            await supabaseAdmin
+              .from('devices')
+              .update({
+                metadata: {
+                  ...(dev.metadata || {}),
+                  monitor_active: false
+                },
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', 'a0000000-0000-0000-0000-000000000001');
+          }
+        }
+      }
     } else {
+      if (demoSensorDevice?.metadata) {
+        demoSensorDevice.metadata.monitor_active = false;
+      }
       results['modo_demo'] = 'Datos en memoria reiniciados (Modo Demo)';
     }
 

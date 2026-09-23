@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
+import { demoSensorDevice } from '@/lib/demoData';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,6 +21,12 @@ export async function POST(req: NextRequest) {
       device_id === 'a0000000-0000-0000-0000-000000000001' || 
       ['start_monitor', 'stop_monitor', 'start_experiment', 'stop_experiment', 'set_sampling_rate', 'manual_sample', 'sleep', 'set_sleep_cycle'].includes(payload?.action);
 
+    const effectivePayload = {
+      action: payload?.action || command_type,
+      original_command_type: command_type,
+      ...payload
+    };
+
     let speed = 0;
     let pwm_us = 1500;
 
@@ -35,10 +42,26 @@ export async function POST(req: NextRequest) {
     }
 
     if (!isSupabaseConfigured()) {
+      if (isSensorCommand && demoSensorDevice?.metadata) {
+        const act = effectivePayload.action || command_type;
+        if (act === 'start_monitor') {
+          demoSensorDevice.metadata.monitor_active = true;
+          if (effectivePayload.interval_sec) {
+            demoSensorDevice.metadata.monitor_interval_sec = Number(effectivePayload.interval_sec);
+          }
+        } else if (act === 'stop_monitor' || act === 'sleep') {
+          demoSensorDevice.metadata.monitor_active = false;
+        } else if (act === 'set_sampling_rate' && effectivePayload.interval_sec) {
+          demoSensorDevice.metadata.monitor_interval_sec = Number(effectivePayload.interval_sec);
+        } else if (act === 'set_sleep_cycle' && effectivePayload.measure_time_min) {
+          demoSensorDevice.metadata.sleep_cycle_min = Number(effectivePayload.measure_time_min);
+        }
+      }
+
       return NextResponse.json({
         success: true,
         message: isSensorCommand 
-          ? `Comando para sensor registrado con éxito (${payload?.action || command_type}) [Modo Demo]`
+          ? `Comando para sensor registrado con éxito (${effectivePayload.action || command_type}) [Modo Demo]`
           : 'Comando registrado con exito (Modo Demo Local)',
         command: {
           id: 'demo-cmd-' + Date.now(),
@@ -46,7 +69,7 @@ export async function POST(req: NextRequest) {
           command_type,
           speed_percent: speed,
           pwm_us,
-          payload,
+          payload: effectivePayload,
           status: 'pending',
           created_at: new Date().toISOString()
         }
@@ -83,12 +106,6 @@ export async function POST(req: NextRequest) {
         dbCommandType = 'set_speed';
       }
     }
-
-    const effectivePayload = {
-      action: payload?.action || command_type,
-      original_command_type: command_type,
-      ...payload
-    };
 
     const actionTag = effectivePayload.action || command_type;
     const reqBy = requested_by.includes('(') ? requested_by : `${requested_by} (${actionTag})`;
@@ -145,6 +162,45 @@ export async function POST(req: NextRequest) {
         },
         { status: 500 }
       );
+    }
+
+    // Actualizar metadatos del sensor inmediatamente para reflejar la intención del operador sin esperar ack
+    if (isSensorCommand) {
+      try {
+        const action = effectivePayload.action;
+        let metadataUpdates: Record<string, any> | null = null;
+        if (action === 'start_monitor') {
+          metadataUpdates = {
+            monitor_active: true,
+            ...(effectivePayload.interval_sec ? { monitor_interval_sec: Number(effectivePayload.interval_sec) } : {})
+          };
+        } else if (action === 'stop_monitor' || action === 'sleep') {
+          metadataUpdates = { monitor_active: false };
+        } else if (action === 'set_sampling_rate' && effectivePayload.interval_sec) {
+          metadataUpdates = { monitor_interval_sec: Number(effectivePayload.interval_sec) };
+        } else if (action === 'set_sleep_cycle' && effectivePayload.measure_time_min) {
+          metadataUpdates = { sleep_cycle_min: Number(effectivePayload.measure_time_min) };
+        }
+
+        if (metadataUpdates) {
+          const { data: currentDev } = await supabaseAdmin
+            .from('devices')
+            .select('metadata')
+            .eq('id', targetDeviceId)
+            .maybeSingle();
+
+          const currentMeta = currentDev?.metadata || {};
+          await supabaseAdmin
+            .from('devices')
+            .update({
+              metadata: { ...currentMeta, ...metadataUpdates },
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', targetDeviceId);
+        }
+      } catch (metaErr) {
+        console.warn('Advertencia actualizando metadatos del sensor:', metaErr);
+      }
     }
 
     // Registrar evento de motor de forma no-bloqueante (solo para actuadores motor)
