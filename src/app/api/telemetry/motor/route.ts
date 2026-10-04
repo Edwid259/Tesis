@@ -40,6 +40,14 @@ export async function POST(req: NextRequest) {
         ? Number(item.power_w) 
         : (voltage_v && current_a ? Number((voltage_v * current_a).toFixed(2)) : null);
       const status_code = Number(item.status_code ?? 0);
+      const target_rpm = item.target_rpm !== undefined ? Number(item.target_rpm) : null;
+      const actual_rpm = item.actual_rpm !== undefined ? Number(item.actual_rpm) : null;
+      const target_rad_s = item.target_rad_s !== undefined ? Number(item.target_rad_s) : null;
+      const actual_rad_s = item.actual_rad_s !== undefined ? Number(item.actual_rad_s) : null;
+      const commanded_duty = item.commanded_duty !== undefined ? Number(item.commanded_duty) : null;
+      const kp = item.kp !== undefined ? Number(item.kp) : null;
+      const ki = item.ki !== undefined ? Number(item.ki) : null;
+      const kd = item.kd !== undefined ? Number(item.kd) : null;
       const recordedAt = item.datetime ? new Date(item.datetime).toISOString() : new Date().toISOString();
 
       return {
@@ -47,11 +55,20 @@ export async function POST(req: NextRequest) {
         recorded_at: recordedAt,
         is_on,
         speed_percent,
+        rpm: item.rpm !== undefined ? Number(item.rpm) : actual_rpm,
         pwm_us,
         voltage_v,
         current_a,
         power_w,
-        status_code
+        status_code,
+        target_rpm,
+        actual_rpm,
+        target_rad_s,
+        actual_rad_s,
+        commanded_duty,
+        kp,
+        ki,
+        kd
       };
     });
 

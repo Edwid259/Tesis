@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS public.motor_telemetry (
     recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     is_on BOOLEAN NOT NULL DEFAULT FALSE,
     speed_percent NUMERIC(5,2) NOT NULL DEFAULT 0.00, -- 0.0 a 100.0%
+    rpm NUMERIC(6,2),                                 -- Velocidad en RPM del motor
     pwm_us INTEGER NOT NULL DEFAULT 1500,             -- 1100µs (max reversa), 1500µs (stop), 1900µs (max avance)
     voltage_v NUMERIC(5,2),                           -- Voltaje batería motor (ej: 14.8V o 12.0V)
     current_a NUMERIC(5,2),                           -- Corriente consumida en Amperios

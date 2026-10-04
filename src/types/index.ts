@@ -54,11 +54,20 @@ export interface MotorTelemetry {
   recorded_at: string;
   is_on: boolean;
   speed_percent: number; // 0 - 100%
+  rpm?: number;          // Real RPM telemetry
   pwm_us: number;        // e.g. 1500 (stop), 1760
   voltage_v?: number;
   current_a?: number;
   power_w?: number;
   status_code?: number;
+  target_rpm?: number;
+  actual_rpm?: number;
+  target_rad_s?: number;
+  actual_rad_s?: number;
+  commanded_duty?: number;
+  kp?: number;
+  ki?: number;
+  kd?: number;
   created_at?: string;
 }
 
@@ -131,6 +140,8 @@ export interface ControlCommand {
   device_id: string;
   command_type: 'start' | 'stop' | 'set_speed' | 'emergency_stop' | 'reboot' | 'set_mode' | 'set_config';
   speed_percent?: number;
+  target_rad_s?: number;
+  target_rpm?: number;
   pwm_us?: number;
   payload?: Record<string, any> | SensorCommandPayload;
   status: CommandStatus;

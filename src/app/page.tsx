@@ -6,7 +6,7 @@ import { MetricCards } from '@/components/MetricCards';
 import { SensorControlPanel } from '@/components/SensorControlPanel';
 import { ClearDatabaseModal } from '@/components/ClearDatabaseModal';
 import { MotorControlPanel } from '@/components/MotorControlPanel';
-import { EscT200ControlPanel } from '@/components/EscT200ControlPanel';
+import { MixerControlPanel } from '@/components/MixerControlPanel';
 import { ChartsSection } from '@/components/ChartsSection';
 import { EventsTable } from '@/components/EventsTable';
 import { AlertsPanel } from '@/components/AlertsPanel';
@@ -212,8 +212,8 @@ export default function DashboardPage() {
             />
           </div>
           <div className="xl:col-span-1">
-            <EscT200ControlPanel
-              escDevice={summary.escDevice || null}
+            <MixerControlPanel
+              mixerDevice={summary.escDevice || null}
               currentTelemetry={summary.latestEscTelemetry || null}
               onCommandSent={() => fetchDashboardData(true)}
             />
