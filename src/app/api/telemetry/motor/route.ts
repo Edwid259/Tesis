@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
       : [body];
 
     const rowsToInsert = rawList.map((item: any) => {
-      const is_on = Boolean(item.is_on);
+      const is_on = Boolean(item.is_on ?? item.is_running);
       const speed_percent = Number(item.speed_percent ?? 0);
       const pwm_us = item.pwm_us !== undefined ? Number(item.pwm_us) : 1500;
       const voltage_v = item.voltage_v !== undefined ? Number(item.voltage_v) : null;
@@ -60,15 +60,7 @@ export async function POST(req: NextRequest) {
         voltage_v,
         current_a,
         power_w,
-        status_code,
-        target_rpm,
-        actual_rpm,
-        target_rad_s,
-        actual_rad_s,
-        commanded_duty,
-        kp,
-        ki,
-        kd
+        status_code
       };
     });
 
