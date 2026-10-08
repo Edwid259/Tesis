@@ -33,9 +33,17 @@ export async function POST(
     // V4: el ACK puede arrastrar el instante exacto de ejecución física (epoch UTC ms) para
     // anular la latencia de red al graficar la perturbación. Se persiste dentro de payload JSONB
     // (sin requerir migración DDL) como `executed_rtc_ms`.
-    const executedRtcMs = Number.isFinite(Number(rtc_timestamp_ms)) && Number(rtc_timestamp_ms) > 0
+    const deviceRtcMs = Number.isFinite(Number(rtc_timestamp_ms)) && Number(rtc_timestamp_ms) > 0
       ? Number(rtc_timestamp_ms)
       : null;
+
+    // ADR-3: se toleran hasta ±5 s de desfase entre el reloj del nodo y el servidor. Fuera de esa
+    // ventana el instante reportado no es fiable (p. ej. NTP aún no sincronizado en la ESP32); se
+    // ancla al reloj del servidor y se conserva el valor crudo del dispositivo para trazabilidad.
+    const CLOCK_SKEW_TOLERANCE_MS = 5000;
+    const clockSkewMs = deviceRtcMs !== null ? Date.now() - deviceRtcMs : null;
+    const deviceClockReliable = clockSkewMs !== null && Math.abs(clockSkewMs) <= CLOCK_SKEW_TOLERANCE_MS;
+    const executedRtcMs = deviceRtcMs === null ? null : (deviceClockReliable ? deviceRtcMs : Date.now());
     const latencyMs = executedRtcMs !== null ? Math.max(0, Date.now() - executedRtcMs) : null;
 
     // Lectura defensiva: la columna `payload` puede no existir en instalaciones sin la migración V4
@@ -75,6 +83,8 @@ export async function POST(
         mergedPayload = {
           ...base,
           ...(executedRtcMs !== null ? { executed_rtc_ms: executedRtcMs } : {}),
+          ...(deviceRtcMs !== null && !deviceClockReliable ? { device_rtc_ms: deviceRtcMs } : {}),
+          ...(clockSkewMs !== null ? { clock_skew_ms: clockSkewMs } : {}),
           ...(latencyMs !== null ? { ack_latency_ms: latencyMs } : {})
         };
       }
@@ -149,7 +159,8 @@ export async function POST(
       success: true,
       message: 'Confirmación de comando procesada exitosamente',
       command_id: id,
-      ...(latencyMs !== null ? { latency_ms: latencyMs } : {})
+      ...(latencyMs !== null ? { latency_ms: latencyMs } : {}),
+      ...(clockSkewMs !== null ? { clock_skew_ms: clockSkewMs, clock_reliable: deviceClockReliable } : {})
     });
 
   } catch (error: any) {

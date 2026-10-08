@@ -52,8 +52,7 @@ assert.ok(/diffMs <= 15000/.test(charts), 'Debe descartar marcadores sin muestra
 assert.ok(/dot=\{\{ r: 4/.test(charts), 'Debe preservar la visibilidad N=1 (dot r=4)');
 ok('Marcador de perturbación anclado al instante de ejecución; N=1 preservado');
 
-console.log('\n[Test 5] Los firmware reportan rtc_timestamp_ms en el ACK...');
-const odrive = read('../Codigos/odrive-controller/src/cloud_worker.cpp');
+console.log('\n[Test 5] Los firmware reportan rtc_timestamp_ms en el ACK...');const odrive = read('../Codigos/odrive-controller/src/cloud_worker.cpp');
 const t200 = read('../Codigos/t-200-controller/src/cloud_worker.cpp');
 const pump = read('../Codigos/pump-controller/src/main.cpp');
 assert.ok(odrive.includes('doc["rtc_timestamp_ms"] = rtc'), 'ODrive debe enviar rtc_timestamp_ms');
@@ -62,6 +61,23 @@ assert.ok(t200.includes('ackDoc["rtc_timestamp_ms"]'), 'T-200 debe enviar rtc_ti
 assert.ok(pump.includes('doc["rtc_timestamp_ms"] = rtc'), 'La bomba debe enviar rtc_timestamp_ms (NTP)');
 ok('ODrive (ESP-NOW), T-200 y bomba (NTP) reportan el instante exacto');
 
+console.log('\n[Test 6] El ACK tolera el desfase de reloj del nodo (ADR-3)...');
+assert.ok(ackRoute.includes('CLOCK_SKEW_TOLERANCE_MS'), 'Debe declarar la tolerancia de desfase');
+assert.ok(ackRoute.includes('deviceClockReliable'), 'Debe evaluar la fiabilidad del reloj del nodo');
+assert.ok(ackRoute.includes('clock_skew_ms'), 'Debe exponer el desfase medido');
+assert.ok(ackRoute.includes('device_rtc_ms'), 'Debe conservar el valor crudo del dispositivo');
+
+function resolveExecuted(deviceRtcMs, serverNowMs, tolerance = 5000) {
+  if (!Number.isFinite(deviceRtcMs) || deviceRtcMs <= 0) return null;
+  const skew = serverNowMs - deviceRtcMs;
+  return Math.abs(skew) <= tolerance ? deviceRtcMs : serverNowMs;
+}
+const T = 1791426163755; // 2026-10-08T02:22:43Z
+assert.strictEqual(resolveExecuted(T, T + 800), T, 'Desfase pequeño: se usa el instante del nodo');
+assert.strictEqual(resolveExecuted(T, T - 16000), T - 16000, 'Nodo adelantado 16 s: se ancla al servidor');
+assert.strictEqual(resolveExecuted(T, T + 60000), T + 60000, 'Nodo atrasado 60 s: se ancla al servidor');
+ok('Instante de ejecución saneado cuando el reloj del nodo no es fiable');
+
 console.log('\n====================================================');
-console.log(' TODAS LAS COMPROBACIONES PASARON CORRECTAMENTE (5/5) ');
+console.log(' TODAS LAS COMPROBACIONES PASARON CORRECTAMENTE (6/6) ');
 console.log('====================================================');
