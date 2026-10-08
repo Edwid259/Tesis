@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
 
       if (insertError) {
         console.error('Error guardando telemetría de motor:', insertError);
-        return NextResponse.json({ error: 'Error al persistir telemetría de motor', details: insertError.message }, { status: 500 });
+        return NextResponse.json({ error: 'Error al persistir telemetría de motor' }, { status: 500 });
       }
 
       await supabaseAdmin
