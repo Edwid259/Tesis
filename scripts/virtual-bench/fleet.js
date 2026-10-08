@@ -63,6 +63,17 @@ class BaseNode {
     this.timers = [];
   }
 
+  /** Consume los comandos pendientes hasta agotarlos (descarta residuos de corridas anteriores). */
+  async drainCommands(maxRounds = 12) {
+    let drained = 0;
+    for (let i = 0; i < maxRounds; i++) {
+      const res = await this.api.deviceGet('/api/commands/pending', this.device.key);
+      if (!res.ok || !res.body?.has_command) break;
+      drained++;
+    }
+    return drained;
+  }
+
   async pollCommands() {
     if (this.stopped) return;
     const res = await this.api.deviceGet('/api/commands/pending', this.device.key);
@@ -114,6 +125,14 @@ class BaseNode {
   gotAction(a) { return this.received.some(r => r.action === a); }
   foreignActions() { return this.actionsSeen().filter(a => a && !ROLE_ACTIONS[this.role].has(a)); }
   payloadOf(action) { return this.received.find(r => r.action === action)?.payload ?? null; }
+
+  /** Último payload de una acción: refleja el estado actual, no un residuo del paso anterior. */
+  lastPayloadOf(action) {
+    for (let i = this.received.length - 1; i >= 0; i--) {
+      if (this.received[i].action === action) return this.received[i].payload;
+    }
+    return null;
+  }
 
   summary() {
     return { role: this.role, commands: this.received.length, actions: this.actionsSeen(), telemetry: this.telemetryCount, errors: this.errors };
@@ -273,8 +292,10 @@ class ODriveNode extends BaseNode {
       return;
     }
 
-    // Re-armado si está desarmado y el bus está vivo (mismo criterio que main.cpp)
-    if (!telem.is_armed && telem.vbus_voltage > 12.0) {
+    // Re-armado si está desarmado y el bus está vivo (mismo criterio que main.cpp).
+    // El umbral es ODRIVE_ARM_MIN_VBUS, no la tensión nominal: con 12 V nominales el bus queda por
+    // debajo de 12.0 en cuanto hay consumo y el motor nunca volvería a armarse.
+    if (!telem.is_armed && telem.vbus_voltage > ODRIVE_C.ODRIVE_ARM_MIN_VBUS) {
       this.virtual.enterClosedLoop();
     }
     this.targetRpm = this.engine.computeOutputRpm(now);

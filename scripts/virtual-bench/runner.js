@@ -71,20 +71,22 @@ const SCENARIOS = {
       });
       // `armed` es la declaración del propio servidor sobre la receta: se contrasta con lo que
       // realmente recibe cada nodo, sin reimplementar la tabla de decisión aquí.
-      assertTrue(exp.armed.includes('mixer'),
-        `El servidor debe declarar el mixer armado (armed: [${exp.armed.join(', ')}])`);
-      assertTrue(!exp.armed.includes('odrive'),
-        `Planta 1 no debe armar el aireador (armed: [${exp.armed.join(', ')}])`);
+      assertTrue(exp.armed.includes('mixer'), `El servidor debe declarar el mixer armado (armed: [${exp.armed.join(', ')}])`);
+      assertTrue(!exp.armed.includes('odrive'), `Planta 1 no debe armar el aireador (armed: [${exp.armed.join(', ')}])`);
 
-      await expectAction(fleet.mixer, 'start_mixer');
+      // La intención viaja en el `set_state` difundido (vía única para los 4 nodos).
+      await expectAction(fleet.mixer, 'set_state');
+      await waitFor(() => fleet.mixer.lastPayloadOf('set_state')?.mixer !== undefined, 15000,
+        'que el mixer reciba su intención');
+      const mix = fleet.mixer.lastPayloadOf('set_state');
+      assertTrue(mix.mixer === 'on', `El mixer debe recibir mixer='on' en Planta 1 (recibió '${mix.mixer}')`);
+      assertTrue(fleet.mixer.targetRpm > 0, 'El mixer debe estar girando');
 
-      // El aireador no debe arrancar. Si el orquestador le manda el estado, debe ser motor_mode off.
-      const motorMode = fleet.odrive.payloadOf('set_state');
-      if (motorMode) {
-        assertTrue(motorMode.motor_mode === 'off',
-          `El ODrive debe quedar en motor_mode 'off' en Planta 1 (recibió '${motorMode.motor_mode}')`);
-      }
-      return ['armed=[mixer]', 'mixer recibió start_mixer', 'aireador sin arranque'];
+      const motor = fleet.odrive.lastPayloadOf('set_state');
+      assertTrue(motor.motor_mode === 'off',
+        `El aireador debe quedar en motor_mode 'off' en Planta 1 (recibió '${motor.motor_mode}')`);
+      assertTrue(fleet.odrive.loopState().targetRpm === 0, 'El aireador no debe demandar RPM');
+      return ["armed=[mixer]", "mixer='on' girando", "aireador en motor_mode 'off'"];
     }
   },
 
@@ -96,23 +98,29 @@ const SCENARIOS = {
         case_type: 'planta_2_step', plant_target: 'planta_2', controller_type: 'none',
         parameters: { step_throttle_pct: 40 }
       });
-      assertTrue(exp.armed.includes('odrive'),
-        `El servidor debe declarar el aireador armado (armed: [${exp.armed.join(', ')}])`);
-      assertTrue(exp.armed.includes('mixer_off'),
-        `El servidor debe declarar el mixer detenido (armed: [${exp.armed.join(', ')}])`);
+      assertTrue(exp.armed.includes('odrive'), `El servidor debe declarar el aireador armado (armed: [${exp.armed.join(', ')}])`);
+      assertTrue(exp.armed.includes('mixer_off'), `El servidor debe declarar el mixer detenido (armed: [${exp.armed.join(', ')}])`);
 
-      await expectAction(fleet.mixer, 'stop_mixer');
-      await expectAction(fleet.odrive, 'set_mode');
+      await waitFor(() => fleet.odrive.lastPayloadOf('set_state')?.motor_mode !== undefined, 15000,
+        'que el aireador reciba su intención');
+      await waitFor(() => fleet.mixer.lastPayloadOf('set_state')?.mixer !== undefined, 15000,
+        'que el mixer reciba su intención');
 
-      const motor = fleet.odrive.payloadOf('set_mode');
-      assertTrue(motor.mode === 'manual', `El aireador debe armarse en manual (recibió '${motor.mode}')`);
-      assertTrue(Number(motor.manual_throttle_pct) === 40,
-        `El escalón debe ser 40% (recibió ${motor.manual_throttle_pct})`);
+      const motor = fleet.odrive.lastPayloadOf('set_state');
+      assertTrue(motor.motor_mode === 'manual', `El aireador debe armarse en manual (recibió '${motor.motor_mode}')`);
+      assertTrue(Number(motor.motor_throttle_pct) === 40,
+        `El escalón debe ser 40% (recibió ${motor.motor_throttle_pct})`);
+
+      const mix = fleet.mixer.lastPayloadOf('set_state');
+      assertTrue(mix.mixer === 'off', `El mixer debe recibir mixer='off' (recibió '${mix.mixer}')`);
+      await waitFor(() => fleet.mixer.targetRpm === 0, 10000, 'que el mixer se detenga');
+      assertTrue(fleet.mixer.targetRpm === 0, 'El mixer debe estar detenido');
 
       // El aireador debe GIRAR de verdad: es lo que nunca ocurría antes.
       await waitFor(() => fleet.odrive.loopState().actualRpm > 1, 15000,
         `El aireador debe girar tras armarse al 40% (RPM actual: ${fleet.odrive.loopState().actualRpm})`);
-      return ['armed=[mixer_off, odrive]', 'aireador girando al 40%', 'mixer detenido'];
+      const rpm = fleet.odrive.loopState().actualRpm;
+      return [`escalón 40%`, `aireador girando a ${rpm.toFixed(1)} RPM`, 'mixer detenido'];
     }
   },
 
@@ -126,17 +134,20 @@ const SCENARIOS = {
       });
       assertTrue(exp.armed.includes('odrive'), 'El servidor debe declarar el aireador armado');
 
-      await expectAction(fleet.odrive, 'set_mode');
-      const motor = fleet.odrive.payloadOf('set_mode');
-      assertTrue(motor.mode === 'pid', `El aireador debe armarse en PID (recibió '${motor.mode}')`);
-      assertTrue(Number(motor.target_do) === 5.0, `El setpoint debe viajar (recibió ${motor.target_do})`);
+      await waitFor(() => fleet.odrive.lastPayloadOf('set_state')?.motor_mode === 'pid', 15000,
+        `que el aireador reciba motor_mode 'pid' (recibió '${fleet.odrive.lastPayloadOf('set_state')?.motor_mode}')`);
+      const motor = fleet.odrive.lastPayloadOf('set_state');
+      assertTrue(Number(motor.motor_target_do) === 5.0,
+        `El setpoint debe viajar (recibió ${motor.motor_target_do})`);
+      assertTrue(fleet.odrive.engine.getConfig().target_do_mg_l === 5.0,
+        'El motor de control debe quedar con el setpoint de 5.0 mg/L');
 
       // Con el OD real por debajo del setpoint, el PID debe demandar RPM.
       fleet.sensor.setTrueDo(2.0);
-      await waitFor(() => fleet.odrive.loopState().targetRpm > 0, 40000,
+      await waitFor(() => fleet.odrive.loopState().targetRpm > 0, 45000,
         'el PID debe demandar RPM con OD por debajo del setpoint');
       const st = fleet.odrive.loopState();
-      return [`PID con setpoint 5.0`, `demanda ${st.targetRpm.toFixed(1)} RPM`, `OD real 2.0 mg/L`];
+      return ['PID con setpoint 5.0', `demanda ${st.targetRpm.toFixed(1)} RPM`, 'OD real 2.0 mg/L'];
     }
   },
 
@@ -166,11 +177,18 @@ const SCENARIOS = {
 
       await expectAction(fleet.mixer, 'set_state');
       await expectAction(fleet.odrive, 'set_state');
-      const mix = payloadOf(fleet.mixer, 'set_state');
-      const mot = payloadOf(fleet.odrive, 'set_state');
-      assertTrue(mix.mixer === 'off', `El mixer debe recibir mixer='off' (recibió '${mix.mixer}')`);
-      assertTrue(mot.motor_mode === 'off', `El motor debe recibir motor_mode='off' (recibió '${mot.motor_mode}')`);
-      return ["mixer='off'", "motor_mode='off'", 'receta abortada'];
+      await waitFor(() => fleet.mixer.lastPayloadOf('set_state')?.mixer !== undefined &&
+        fleet.odrive.lastPayloadOf('set_state')?.motor_mode !== undefined, 15000,
+        'que ambos actuadores reciban su intención');
+      const mix = fleet.mixer.lastPayloadOf('set_state');
+      const mot = fleet.odrive.lastPayloadOf('set_state');
+      assertTrue(mix.state === 'MANUAL_OVERRIDE' && mix.mixer === 'off',
+        `El mixer debe recibir state=MANUAL_OVERRIDE y mixer='off' (recibió ${mix.state}/${mix.mixer})`);
+      assertTrue(mot.state === 'MANUAL_OVERRIDE' && mot.motor_mode === 'off',
+        `El motor debe recibir state=MANUAL_OVERRIDE y motor_mode='off' (recibió ${mot.state}/${mot.motor_mode})`);
+      assertTrue(fleet.odrive.loopState().targetRpm === 0, 'El aireador debe quedar a 0 RPM');
+      assertTrue(fleet.mixer.targetRpm === 0, 'El mixer debe quedar detenido');
+      return ['mixer=off', 'motor_mode=off', 'receta abortada en los 4 nodos'];
     }
   },
 
@@ -187,7 +205,8 @@ const SCENARIOS = {
       });
       assertTrue(stop.ok, `No se pudo encolar el E-Stop (HTTP ${stop.status})`);
       await expectAction(fleet.odrive, 'emergency_stop');
-      assertTrue(fleet.odrive.emergencyStop === true, 'El nodo debe quedar latcheado tras el E-Stop');
+      await waitFor(() => fleet.odrive.loopState().eStop === true, 5000, 'que el latch quede activo');
+      assertTrue(fleet.odrive.loopState().targetRpm === 0, 'El E-Stop debe forzar 0 RPM');
 
       const resume = await api.post('/api/commands', {
         device_id: devices.odrive.id,
@@ -198,8 +217,102 @@ const SCENARIOS = {
       });
       assertTrue(resume.ok, `No se pudo encolar clear_estop (HTTP ${resume.status})`);
       await expectAction(fleet.odrive, 'clear_estop');
-      assertTrue(fleet.odrive.emergencyStop === false, 'clear_estop debe liberar el latch');
-      return ['E-Stop latcheado', 'clear_estop libera el latch'];
+      await waitFor(() => fleet.odrive.loopState().eStop === false, 5000, 'que el latch se libere');
+      assertTrue(fleet.odrive.engine.isEmergencyStopActive() === false, 'clear_estop debe liberar el latch');
+
+      // El E-Stop NO debe liberarse solo al recibir un nuevo estado/receta.
+      return ['E-Stop latcheado a 0 RPM', 'clear_estop libera el latch', 'el armado no lo libera implícitamente'];
+    }
+  },
+
+  /**
+   * CARACTERIZACIÓN DE UN HUECO DE SEGURIDAD REAL.
+   *
+   * El watchdog de 35 s se evalúa DESPUÉS del branch de modo MANUAL, tanto en el firmware como en
+   * el gemelo. Consecuencia: en MANUAL no hay failsafe alguno — si el enlace con el sensor muere,
+   * el motor conserva el último throttle indefinidamente. En PID sí actúa el watchdog.
+   *
+   * Este escenario fija ese comportamiento para que cualquier cambio en el firmware sea visible.
+   */
+  manualFailsafeGap: {
+    description: 'Caracterización: en MANUAL el watchdog de 35 s NO actúa (sólo protege al PID)',
+    async run({ fleet, devices, api }) {
+      // Modo MANUAL con throttle distinto de cero
+      const res = await api.post('/api/commands', {
+        device_id: devices.odrive.id,
+        command_type: 'set_speed',
+        speed_percent: 25,
+        payload: { action: 'force_on', manual_throttle_pct: 25 },
+        requested_by: 'Banco virtual (caracterización)'
+      });
+      assertTrue(res.ok, `No se pudo armar en manual (HTTP ${res.status})`);
+      await expectAction(fleet.odrive, 'force_on');
+      await waitFor(() => fleet.odrive.loopState().targetRpm > 0, 10000, 'que demande RPM en manual');
+
+      // Se corta el enlace del sensor
+      fleet.sensor.setFault('noResponse');
+      await waitFor(() => fleet.odrive.rejectedSamples > 0, 30000, 'que lleguen muestras inválidas');
+
+      // No se esperan 35 s completos: se comprueba que el watchdog NO está armado en manual.
+      const st = fleet.odrive.loopState();
+      assertTrue(st.mode === 2, `El motor debe estar en modo MANUAL (mode=${st.mode})`);
+      assertTrue(st.failsafe === false,
+        'En MANUAL el watchdog no debe activarse (comportamiento real del firmware)');
+      assertTrue(st.targetRpm > 0,
+        `En MANUAL el motor conserva su consigna aunque el sensor muera (target=${st.targetRpm} RPM)`);
+
+      fleet.sensor.setFault('none');
+      return [
+        'modo MANUAL: el watchdog NO protege',
+        `conserva ${st.targetRpm.toFixed(0)} RPM sin sensor`,
+        'un PID con sensor muerto SÍ frena (ver escenario espnowTrust)'
+      ];
+    }
+  },
+
+  /**
+   * FRONTERA DE CONFIANZA de `status_flags` en lazo cerrado (PID).
+   *
+   * Con el sensor averiado el logger transmite DO=0.000 con el bit 22 activo. El receptor debe
+   * DESCARTAR esa muestra: si la aceptara, el PID vería un error enorme y llevaría el motor a fondo.
+   * Al descartarla, la variable de proceso no se refresca y el watchdog de 35 s frena el motor.
+   */
+  espnowTrust: {
+    description: 'PID + fallo de sensor: el cero fantasma no entra al lazo y actúa el watchdog',
+    async run({ createExperiment, fleet }) {
+      // Se necesita el modo PID: en MANUAL no hay watchdog (ver manualFailsafeGap).
+      await createExperiment({
+        case_type: 'closed_loop', plant_target: 'planta_2', controller_type: 'pid',
+        setpoint_do: 5.0, parameters: {}
+      });
+      await waitFor(() => fleet.odrive.loopState().mode === 0, 15000,
+        `El aireador debe quedar en PID (mode=${fleet.odrive.loopState().mode})`);
+
+      fleet.sensor.setTrueDo(2.0);
+      await waitFor(() => fleet.odrive.acceptedSamples >= 2, 30000, 'que lleguen muestras válidas');
+      const doBefore = fleet.odrive.engine.getLastMeasuredDo();
+      assertTrue(doBefore > 0, `La variable de proceso debe tener un valor real (tiene ${doBefore})`);
+
+      fleet.sensor.setFault('noResponse');
+      const rejectedBefore = fleet.odrive.rejectedSamples;
+      await waitFor(() => fleet.odrive.rejectedSamples > rejectedBefore, 30000,
+        'que el ODrive reciba paquetes marcados como inválidos (ceros + bit 22)');
+
+      const st = fleet.odrive.loopState();
+      assertTrue(st.rejected > 0, `Debe haber muestras rechazadas (${st.rejected})`);
+      assertTrue(fleet.odrive.engine.getLastMeasuredDo() === doBefore,
+        `El cero fantasma NO debe entrar al lazo: la variable pasó de ${doBefore} a ${fleet.odrive.engine.getLastMeasuredDo()}`);
+
+      await waitFor(() => fleet.odrive.loopState().failsafe, 50000, 'que se active el watchdog de 35 s');
+      assertTrue(fleet.odrive.loopState().targetRpm === 0, 'El watchdog debe dejar el motor a 0 RPM');
+      assertTrue(fleet.odrive.engine.getLastMeasuredDo() === doBefore, 'La variable de proceso sigue sin contaminarse');
+
+      fleet.sensor.setFault('none');
+      return [
+        `${st.rejected} muestras rechazadas`,
+        'el cero fantasma no entró al lazo',
+        'watchdog de 35 s a 0 RPM'
+      ];
     }
   },
 
@@ -231,48 +344,6 @@ const SCENARIOS = {
         evidence.push('verificación de BD omitida (sin credenciales)');
       }
       return evidence;
-    }
-  },
-
-  /**
-   * FRONTERA DE CONFIANZA de `status_flags`: con el sensor averiado, el logger transmite DO=0.000
-   * con el bit 22 activo. El receptor debe DESCARTAR esa muestra; si la aceptara, el PID vería un
-   * error enorme y llevaría el motor a fondo. Aquí se comprueba que no se inyecta el cero fantasma
-   * y que el watchdog de 35 s acaba frenando el motor.
-   */
-  espnowTrust: {
-    description: 'Fallo de sensor: la muestra marcada no entra al lazo y actúa el watchdog',
-    async run({ api, fleet }) {
-        const res = await api.post('/api/system/state', { state: 'ACTIVE_EXPERIMENT', requested_by: 'Banco virtual' });
-        assertTrue(res.ok, `No se pudo activar el experimento (HTTP ${res.status})`);
-
-        // OD muy bajo -> error positivo -> el PID acelera, así el fallo es observable.
-        fleet.sensor.setTrueDo(2.0);
-        await waitFor(() => fleet.odrive.loopState().accepted >= 2, 30000, 'que el ODrive reciba muestras válidas');
-        const doBefore = fleet.odrive.engine.getLastMeasuredDo();
-        assertTrue(doBefore > 0, `La variable de proceso debe tener un valor real antes del fallo (tiene ${doBefore})`);
-
-        // Avería del sensor: responde con ceros y el bit de estado
-        fleet.sensor.setFault('noResponse');
-        const rejectedBefore = fleet.odrive.rejectedSamples;
-        await waitFor(() => fleet.odrive.rejectedSamples > rejectedBefore, 30000,
-          'que el ODrive reciba paquetes marcados como inválidos');
-
-        const st = fleet.odrive.loopState();
-        assertTrue(st.rejected > 0, `Debe haber muestras rechazadas (${st.rejected})`);
-        assertTrue(fleet.odrive.engine.getLastMeasuredDo() === doBefore,
-          `El cero fantasma NO debe entrar al lazo: la variable pasó de ${doBefore} a ${fleet.odrive.engine.getLastMeasuredDo()}`);
-
-        // Tras 35 s sin muestras válidas el watchdog debe haber frenado el motor.
-        await waitFor(() => fleet.odrive.loopState().failsafe, 45000, 'que se active el watchdog de 35 s');
-        assertTrue(fleet.odrive.engine.getLastMeasuredDo() === doBefore, 'La variable de proceso sigue sin contaminarse');
-
-        fleet.sensor.setFault('none');
-        return [
-          `${st.rejected} muestras rechazadas`,
-          'el cero fantasma no entró al lazo',
-          'watchdog de 35 s activado'
-        ];
     }
   },
 
@@ -430,11 +501,18 @@ class Bench {
     const scenario = SCENARIOS[name];
     assertTrue(scenario, `Escenario desconocido: '${name}'. Disponibles: ${Object.keys(SCENARIOS).join(', ')}`);
 
-    // Aísla cada escenario: se descarta lo observado en el anterior.
+    // Aísla cada escenario: se descarta lo observado en el anterior y se vacían los comandos
+    // pendientes. Sin este drenaje, un residuo de la corrida previa (p. ej. el `set_state IDLE` de
+    // la restauración) se entrega primero — cada poll devuelve un solo comando — y ensucia las
+    // aserciones de intención.
     for (const node of Object.values(this.fleet)) {
       node.received = [];
       node.acked = [];
       node.errors = [];
+    }
+    for (const node of Object.values(this.fleet)) {
+      const n = await node.drainCommands();
+      if (n > 0 && this.args.verbose) console.log(`   (${node.role}: ${n} comandos obsoletos descartados)`);
     }
 
     console.log(`\n[${name}] ${scenario.description}`);
@@ -468,6 +546,12 @@ class Bench {
       this.results.push({ name, ok: false, error: err.message });
       console.log(`  ✗ FAIL  ${err.message}`);
       if (this.args.verbose) console.log(err.stack);
+    } finally {
+      // Saneamiento obligatorio: un fallo no debe dejar el sensor averiado ni un reloj desfasado,
+      // porque eso haría fallar en cascada a los escenarios siguientes.
+      this.fleet.sensor.setFault('none');
+      this.fleet.odrive.clock.skewMs = 0;
+      this.link.setApChannel(this.link.channel, { realignReceiver: true });
     }
   }
 

@@ -59,10 +59,18 @@ class ApiClient {
 /**
  * Acceso directo a Supabase para VERIFICAR y LIMPIAR.
  *
- * La limpieza es por RANGO DE `id`: se toma el id máximo antes de la corrida y al final se borra
- * sólo lo que quedó por encima. Es determinista y no depende de ventanas de tiempo, a diferencia de
- * un borrado por timestamp. Si una tabla no existe (migración pendiente) se registra y se continúa.
+ * La limpieza es por RANGO: se toma el máximo antes de la corrida y al final se borra sólo lo que
+ * quedó por encima. Es determinista y no depende de ventanas de tiempo.
+ *
+ * OJO: `control_commands.id` es un UUID, no un bigint, así que no admite `id > N`. Para esa tabla se
+ * usa `created_at` como marca y se restringe el borrado a los 4 dispositivos canónicos, de modo que
+ * nunca se tocan filas ajenas al banco.
  */
+const { DEVICES } = require('./config');
+
+/** Tablas cuya clave no es numérica: se limpian por marca temporal. */
+const TEMPORAL_KEY_TABLES = { control_commands: 'created_at' };
+
 class Store {
   constructor(creds) {
     this.creds = creds;
@@ -78,24 +86,40 @@ class Store {
     });
     if (res.status === 404) { this.missingTables.push(table); return null; }
     if (!res.ok || !Array.isArray(res.body) || res.body.length === 0) return 0;
-    return Number(res.body[0].id);
+    // Si la clave no es numérica (p. ej. UUID) no sirve el rango: se marca como nula.
+    const asNumber = Number(res.body[0].id);
+    return Number.isFinite(asNumber) ? asNumber : null;
   }
 
-  /** Snapshot de los id máximos de todas las tablas que el banco podría escribir. */
+  /** Última marca temporal de una tabla (para claves no numéricas). */
+  async maxTimestamp(table, column) {
+    if (!this.available) return null;
+    const res = await request(`${this.creds.url}/rest/v1/${table}?select=${column}&order=${column}.desc&limit=1`, {
+      headers: this.headers
+    });
+    if (res.status === 404) { this.missingTables.push(table); return null; }
+    if (!res.ok || !Array.isArray(res.body) || res.body.length === 0) return null;
+    return res.body[0][column];
+  }
+
+  /** Snapshot de las marcas de todas las tablas que el banco podría escribir. */
   async snapshot() {
     if (!this.available) return null;
     const snap = {};
-    for (const t of WRITTEN_TABLES) snap[t] = await this.maxId(t);
+    for (const t of WRITTEN_TABLES) {
+      snap[t] = TEMPORAL_KEY_TABLES[t]
+        ? await this.maxTimestamp(t, TEMPORAL_KEY_TABLES[t])
+        : await this.maxId(t);
+    }
     return snap;
   }
 
   /** Cuenta filas creadas desde el snapshot (por tabla). */
   async countCreated(table, sinceId) {
-    if (!this.available || sinceId === null) return null;
-    const res = await request(
-      `${this.creds.url}/rest/v1/${table}?select=id&id=gt.${sinceId}`,
-      { headers: { ...this.headers, Prefer: 'count=exact' } }
-    );
+    if (!this.available || sinceId === null || sinceId === undefined) return null;
+    const res = await request(`${this.creds.url}/rest/v1/${table}?select=id&id=gt.${sinceId}`, {
+      headers: { ...this.headers, Prefer: 'count=exact' }
+    });
     if (res.status === 404) return null;
     if (!res.ok || !Array.isArray(res.body)) return null;
     return res.body.length;
@@ -106,13 +130,22 @@ class Store {
     if (!this.available || !snapshot) return { deleted: 0, tables: [] };
     let deleted = 0;
     const tables = [];
+
     for (const t of WRITTEN_TABLES) {
-      const sinceId = snapshot[t];
-      if (sinceId === null || sinceId === undefined) continue;
-      const res = await request(`${this.creds.url}/rest/v1/${t}?id=gt.${sinceId}`, {
-        method: 'DELETE',
-        headers: { ...this.headers, Prefer: 'return=representation' }
-      });
+      const marker = snapshot[t];
+      if (marker === null || marker === undefined) continue;
+
+      const temporal = TEMPORAL_KEY_TABLES[t];
+      let url;
+      if (temporal) {
+        // Restringido a los nodos del banco para no borrar órdenes ajenas.
+        const ids = Object.values(DEVICES).map(d => d.id).join(',');
+        url = `${this.creds.url}/rest/v1/${t}?${temporal}=gt.${encodeURIComponent(marker)}&device_id=in.(${ids})`;
+      } else {
+        url = `${this.creds.url}/rest/v1/${t}?id=gt.${marker}`;
+      }
+
+      const res = await request(url, { method: 'DELETE', headers: { ...this.headers, Prefer: 'return=representation' } });
       if (res.ok && Array.isArray(res.body)) {
         if (res.body.length > 0) tables.push(`${t}:${res.body.length}`);
         deleted += res.body.length;

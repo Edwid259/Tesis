@@ -16,6 +16,9 @@ module.exports = {
     MAX_MOTOR_RPM: 600.0,
     FAILSAFE_MOTOR_RPM: 0.0,
     FAILSAFE_TIMEOUT_MS: 35000,
+    // Tensión mínima de bus para (re)armar. NO puede ser la nominal del banco (12 V): el bus cae
+    // por debajo al menor consumo y el motor quedaría sin armar de forma permanente.
+    ODRIVE_ARM_MIN_VBUS: 8.0,
     CONTROL_LOOP_INTERVAL_MS: 50,      // 20 Hz determinista en Core 1
     TELEMETRY_PUSH_INTERVAL_MS: 5000,
     COMMAND_POLL_INTERVAL_MS: 1500,    // modo auto
