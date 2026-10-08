@@ -48,7 +48,7 @@ export const MixerControlPanel: React.FC<MixerControlPanelProps> = ({
           device_id: targetDeviceId,
           command_type: 'stop',
           speed_percent: 0,
-          payload: { action: 'quick_stop', target_rpm: 0 },
+          payload: { action: 'quick_stop', target_rpm: 0, target_rad_s: 0 },
           requested_by: 'Parada Manual T-200 (Web)'
         })
       });
@@ -83,7 +83,8 @@ export const MixerControlPanel: React.FC<MixerControlPanelProps> = ({
 
     try {
       const rpmToSend = isOn ? targetRpm : 0;
-      const commandType = isOn ? (targetRpm > 0 ? 'set_rpm' : 'stop') : 'stop';
+      const commandType = isOn ? (targetRpm > 0 ? 'set_speed' : 'stop') : 'stop';
+      const radsToSend = (rpmToSend * 2 * Math.PI) / 60.0;
 
       const res = await fetch('/api/commands', {
         method: 'POST',
@@ -94,7 +95,8 @@ export const MixerControlPanel: React.FC<MixerControlPanelProps> = ({
           speed_percent: (rpmToSend / 3000) * 100, // opcional
           payload: {
             mode: 'closed_loop',
-            target_rpm: rpmToSend
+            target_rpm: rpmToSend,
+            target_rad_s: radsToSend
           },
           requested_by: 'Operador Web (Mezclador T-200)'
         })
