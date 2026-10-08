@@ -84,7 +84,12 @@ export async function setSystemState(patch: Partial<SystemState> & { updated_by?
 
 export interface EnqueueCommandInput {
   device_id: string;
-  command_type: 'start' | 'stop' | 'set_speed' | 'emergency_stop' | 'reboot' | 'set_mode' | 'set_config';
+  /**
+   * Solo los tipos permitidos por el CHECK de `control_commands` en producción
+   * (`start`, `stop`, `set_speed`, `emergency_stop`, `reboot`). La intención semántica
+   * viaja en `payload.action`, que el firmware interpreta con prioridad.
+   */
+  command_type: 'start' | 'stop' | 'set_speed' | 'emergency_stop' | 'reboot';
   payload?: Record<string, any>;
   speed_percent?: number;
   requested_by?: string;
@@ -143,7 +148,9 @@ export async function broadcastState(state: SystemState, requested_by: string): 
     const isSensor = device_id === DEVICE_IDS.sensor;
     const cmd = await enqueueCommand({
       device_id,
-      command_type: isSensor ? (state.state === 'IDLE' ? 'stop' : 'start') : 'set_config',
+      // `set_speed` es el tipo permitido por el CHECK de producción para actuadores;
+      // el significado real viaja en payload.action = 'set_state'.
+      command_type: isSensor ? (state.state === 'IDLE' ? 'stop' : 'start') : 'set_speed',
       payload: {
         action: 'set_state',
         state: state.state,

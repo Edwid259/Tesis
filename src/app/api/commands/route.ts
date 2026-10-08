@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Normalizar command_type para satisfacer el constraint de la BD: ('start', 'stop', 'set_speed', 'emergency_stop', 'reboot')
-    const allowedDbTypes = ['start', 'stop', 'set_speed', 'emergency_stop', 'reboot', 'set_mode', 'set_config'];
+    const allowedDbTypes = ['start', 'stop', 'set_speed', 'emergency_stop', 'reboot'];
     let dbCommandType = command_type;
     if (!allowedDbTypes.includes(dbCommandType)) {
       if (isSensorCommand) {

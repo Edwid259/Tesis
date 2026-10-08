@@ -30,13 +30,36 @@ export async function GET(req: NextRequest) {
 
   try {
     const since = new Date(Date.now() - hours * 3600 * 1000).toISOString();
-    const { data, error } = await supabaseAdmin
+
+    // Lectura defensiva: `payload` puede no existir (instalaciones sin la migración V4);
+    // en ese caso el JSON del comando vive en `error_message` (convención del ecosistema).
+    const base = () =>
+      supabaseAdmin
+        .from('control_commands')
+        .select('id, device_id, error_message, created_at, status')
+        .in('status', ['acknowledged', 'sent'])
+        .gte('created_at', since)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+    let data: any[] | null = null;
+    let error: any = null;
+
+    const withPayload = await supabaseAdmin
       .from('control_commands')
       .select('id, device_id, payload, error_message, created_at, status')
       .in('status', ['acknowledged', 'sent'])
       .gte('created_at', since)
       .order('created_at', { ascending: false })
       .limit(limit);
+
+    if (withPayload.error) {
+      const retry = await base();
+      data = retry.data;
+      error = retry.error;
+    } else {
+      data = withPayload.data;
+    }
 
     if (error) {
       console.error('Error consultando perturbaciones:', error);

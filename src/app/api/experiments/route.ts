@@ -199,7 +199,9 @@ export async function POST(req: NextRequest) {
         const usePid = controller_type === 'pid' || case_type === 'closed_loop';
         const ok = await enqueueCommand({
           device_id: DEVICE_IDS.odrive,
-          command_type: 'set_mode',
+          // `set_speed` es el tipo permitido por el CHECK de producción; la intención real
+          // (mode/target_do/throttle) viaja en payload.action = 'set_mode'.
+          command_type: 'set_speed',
           payload: {
             action: 'set_mode',
             mode: usePid ? 'pid' : 'manual',

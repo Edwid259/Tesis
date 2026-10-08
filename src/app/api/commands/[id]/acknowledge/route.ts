@@ -38,12 +38,31 @@ export async function POST(
       : null;
     const latencyMs = executedRtcMs !== null ? Math.max(0, Date.now() - executedRtcMs) : null;
 
-    const { data: existing } = await supabaseAdmin
-      .from('control_commands')
-      .select('payload, error_message')
-      .eq('id', id)
-      .eq('device_id', device.id)
-      .maybeSingle();
+    // Lectura defensiva: la columna `payload` puede no existir en instalaciones sin la migración V4
+    // (el ecosistema ya usa `error_message` como almacén JSON del comando).
+    let existing: any = null;
+    let hasPayloadColumn = false;
+    {
+      const withPayload = await supabaseAdmin
+        .from('control_commands')
+        .select('payload, error_message')
+        .eq('id', id)
+        .eq('device_id', device.id)
+        .maybeSingle();
+
+      if (!withPayload.error) {
+        existing = withPayload.data;
+        hasPayloadColumn = true;
+      } else {
+        const withoutPayload = await supabaseAdmin
+          .from('control_commands')
+          .select('error_message')
+          .eq('id', id)
+          .eq('device_id', device.id)
+          .maybeSingle();
+        existing = withoutPayload.data;
+      }
+    }
 
     let mergedPayload: Record<string, any> | null = null;
     if (existing) {
@@ -66,7 +85,14 @@ export async function POST(
       executed_at: new Date().toISOString(),
       error_message: error_message || null
     };
-    if (mergedPayload) updateFields.payload = mergedPayload;
+    if (mergedPayload) {
+      if (hasPayloadColumn) {
+        updateFields.payload = mergedPayload;
+      } else if (!error_message) {
+        // Sin columna `payload`: persistir el instante exacto en el almacén JSON del comando.
+        updateFields.error_message = JSON.stringify(mergedPayload);
+      }
+    }
 
     let { data: command, error } = await supabaseAdmin
       .from('control_commands')
