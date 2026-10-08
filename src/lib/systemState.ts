@@ -1,21 +1,21 @@
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
-import { OrchestratorState, SystemState, OverrideFlags, CommandStatus } from '@/types';
+import { OrchestratorState, SystemState, OverrideFlags, CommandStatus, DeviceRole } from '@/types';
 import { resolveActuatorRecipe, buildActuatorIntent } from '@/lib/experimentRecipe';
+import {
+  DEVICE_ID_BY_ROLE,
+  ALL_DEVICE_IDS as ALL_CANONICAL_DEVICE_IDS,
+  ROLE_BY_DEVICE_ID
+} from '@/lib/deviceRoles';
+
+export type { DeviceRole };
 
 /** Clave canónica en system_settings para el estado global del orquestador (AquaControl V4). */
 export const ORCHESTRATOR_KEY = 'system_state';
 
-/** Registro canónico de nodos del banco de pruebas. */
-export const DEVICE_IDS = {
-  sensor: 'a0000000-0000-0000-0000-000000000001',
-  odrive: 'b0000000-0000-0000-0000-000000000002',
-  mixer: 'c0000000-0000-0000-0000-000000000003',
-  pump: 'd0000000-0000-0000-0000-000000000004'
-} as const;
+/** Registro canónico de nodos del banco de pruebas (rol -> device_id). Ver `deviceRoles.ts`. */
+export const DEVICE_IDS = DEVICE_ID_BY_ROLE;
 
-export type DeviceRole = keyof typeof DEVICE_IDS;
-
-export const ALL_DEVICE_IDS: string[] = Object.values(DEVICE_IDS);
+export const ALL_DEVICE_IDS = ALL_CANONICAL_DEVICE_IDS;
 
 const IDLE_OVERRIDE: OverrideFlags = { master: false, pump: false, mixer: false, odrive: false };
 
@@ -172,14 +172,15 @@ export async function broadcastState(state: SystemState, requested_by: string): 
 
   let queued = 0;
   for (const device_id of ALL_DEVICE_IDS) {
-    const isSensor = device_id === DEVICE_IDS.sensor;
+    const role = ROLE_BY_DEVICE_ID[device_id];
+    const isSensor = role === 'sensor';
 
     // La intención se envía solo al nodo que la ejecuta, para no dejar ambigüedad entre nodos.
     const roleIntent: Record<string, string | number> = {};
-    if (device_id === DEVICE_IDS.mixer) {
+    if (role === 'mixer') {
       roleIntent.mixer = intent.mixer as string;
     }
-    if (device_id === DEVICE_IDS.odrive) {
+    if (role === 'odrive') {
       roleIntent.motor_mode = intent.motor_mode as string;
       if (intent.motor_target_do !== undefined) roleIntent.motor_target_do = intent.motor_target_do;
       if (intent.motor_throttle_pct !== undefined) roleIntent.motor_throttle_pct = intent.motor_throttle_pct;
@@ -194,6 +195,9 @@ export async function broadcastState(state: SystemState, requested_by: string): 
         action: 'set_state',
         state: state.state,
         experiment_id: state.experiment_id,
+        // Rol destinatario: permite al firmware (y al fallback de /api/commands/pending) verificar
+        // que la orden es suya, sin depender de `devices.type`.
+        target_role: role,
         override: state.override,
         interval_sec: 5,
         ...roleIntent

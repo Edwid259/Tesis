@@ -33,7 +33,7 @@ function resolveCommandPayload(row: any): Record<string, any> {
  */
 export async function GET(req: NextRequest) {
   // Autenticar que sea un dispositivo registrado
-  const { device, errorResponse } = await authenticateDevice(req);
+  const { device, role: deviceRole, errorResponse } = await authenticateDevice(req);
   if (errorResponse) return errorResponse;
 
   try {
@@ -74,13 +74,22 @@ export async function GET(req: NextRequest) {
         const candidate = fallbackQuery.data[0];
         const candidatePayload = resolveCommandPayload(candidate);
         const candidateAction = String(candidatePayload?.action || '');
+
+        // Si la orden declara su rol destinatario, solo ese rol la puede tomar.
+        const targetRole = typeof candidatePayload?.target_role === 'string' ? candidatePayload.target_role : null;
+        const roleMatches = targetRole === null || targetRole === deviceRole;
+
         const isSensorCmd =
           candidateAction.includes('monitor') ||
           candidateAction.includes('experiment') ||
           candidateAction.includes('sample') ||
           ['start', 'stop'].includes(candidate.command_type);
 
-        if ((device.type === 'sensor_do' && isSensorCmd) || (device.type === 'motor_thruster' && !isSensorCmd)) {
+        // El rol manda; `devices.type` solo se usa como último recurso cuando el rol no se pudo
+        // resolver (p. ej. una fila legacy sin `device_id` canónico).
+        const isSensorDevice = deviceRole ? deviceRole === 'sensor' : device.type === 'sensor_do';
+
+        if (roleMatches && ((isSensorDevice && isSensorCmd) || (!isSensorDevice && !isSensorCmd))) {
           commands = [candidate];
         }
       }

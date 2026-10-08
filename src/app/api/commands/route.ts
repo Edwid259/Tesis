@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { demoSensorDevice } from '@/lib/demoData';
 import { getSystemState } from '@/lib/systemState';
+import { DeviceRole } from '@/types';
+import { DEVICE_ID_BY_ROLE } from '@/lib/deviceRoles';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -97,20 +99,27 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Resolver ID del dispositivo si no fue enviado
+    // Resolver ID del dispositivo si no fue enviado.
+    // Se resuelve por ROL canónico: `.eq('type','motor_thruster').limit(1)` podía devolver el
+    // mixer o la bomba en lugar del aireador, porque los tres comparten esa etiqueta legacy.
     let targetDeviceId = device_id;
     if (!targetDeviceId) {
-      const targetType = isSensorCommand ? 'sensor_do' : 'motor_thruster';
+      const targetRole: DeviceRole = isSensorCommand ? 'sensor' : 'odrive';
+      const roleDeviceId = DEVICE_ID_BY_ROLE[targetRole];
+
       const { data: foundDev } = await supabaseAdmin
         .from('devices')
         .select('id')
-        .eq('type', targetType)
+        .eq('id', roleDeviceId)
         .limit(1);
-      
+
       if (foundDev && foundDev.length > 0) {
         targetDeviceId = foundDev[0].id;
       } else {
-        return NextResponse.json({ error: `No se encontro un dispositivo de tipo ${targetType} registrado` }, { status: 404 });
+        return NextResponse.json(
+          { error: `No se encontró el dispositivo con rol '${targetRole}' registrado` },
+          { status: 404 }
+        );
       }
     }
 

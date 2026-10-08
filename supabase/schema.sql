@@ -11,7 +11,14 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TABLE IF NOT EXISTS public.devices (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(100) NOT NULL,
-    type VARCHAR(50) NOT NULL CHECK (type IN ('sensor_do', 'motor_thruster', 'gateway')),
+    type VARCHAR(50) NOT NULL CHECK (type IN (
+        'sensor_do',
+        'aerator_motor',   -- ODrive S1: aireador principal (0-600 RPM, FOC UART)
+        'mixer',           -- T-200: agitador auxiliar (PWM 50 Hz)
+        'dosing_pump',     -- Bomba peristáltica 12V (Na2SO3)
+        'motor_thruster',  -- LEGACY: agrupaba los tres actuadores; se conserva por compatibilidad
+        'gateway'
+    )),
     api_key_hash VARCHAR(64) NOT NULL, -- Hash SHA-256 del token X-Device-Key
     location VARCHAR(150) DEFAULT 'Estanque Principal',
     status VARCHAR(20) DEFAULT 'offline' CHECK (status IN ('online', 'offline', 'warning', 'error')),
@@ -137,6 +144,47 @@ CREATE TABLE IF NOT EXISTS public.mixer_events (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 10. TABLA: mixer_telemetry (Archivo de alta fidelidad del agitador T-200)
+--     Cada actuador tiene su propia tabla de archivo: mezclarlos impedía separar la dinámica
+--     electromecánica del aireador (necesaria para identificar KLa) de los eventos de mezcla.
+CREATE TABLE IF NOT EXISTS public.mixer_telemetry (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    experiment_id VARCHAR(50) NOT NULL,
+    payload_json JSONB NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 11. TABLA: pump_events (Dosificación de Na2SO3)
+CREATE TABLE IF NOT EXISTS public.pump_events (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    experiment_id VARCHAR(50) NOT NULL,
+    event_type VARCHAR(50) NOT NULL CHECK (event_type IN ('dose_pump', 'start_pump', 'stop_pump', 'manual_confirmation')),
+    volume_ml NUMERIC(10,3),
+    status VARCHAR(50),
+    rtc_timestamp_ms BIGINT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 12. TABLA: pump_telemetry (Archivo de alta fidelidad de la bomba dosificadora)
+CREATE TABLE IF NOT EXISTS public.pump_telemetry (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    experiment_id VARCHAR(50) NOT NULL,
+    payload_json JSONB NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 13. TABLA: manual_overrides_log (Bitácora de seguridad de anulación manual y E-Stop)
+CREATE TABLE IF NOT EXISTS public.manual_overrides_log (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    experiment_id VARCHAR(50),
+    target VARCHAR(50) NOT NULL,
+    device_id UUID,
+    action VARCHAR(100) NOT NULL,
+    requested_by VARCHAR(100),
+    rtc_timestamp_ms BIGINT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- 7. TABLA: system_settings (Configuración general de umbrales y factores de escala)
 CREATE TABLE IF NOT EXISTS public.system_settings (
     key VARCHAR(50) PRIMARY KEY,
@@ -178,9 +226,9 @@ ON CONFLICT (key) DO NOTHING;
 INSERT INTO public.devices (id, name, type, api_key_hash, location, status, last_seen_at, metadata)
 VALUES
     ('a0000000-0000-0000-0000-000000000001', 'Sensor Óptico OD - Estanque 1', 'sensor_do', '2ae50779e5419027c848d0677699c75164387685b30ed1db9f801c611af0dd5e', 'Estanque Principal (Zona Norte)', 'online', NOW(), '{"sensor_model": "Aqualabo DIGISENS", "interface": "Modbus RS485"}'::jsonb),
-    ('b0000000-0000-0000-0000-000000000002', 'Controlador ODrive S1 - Estanque 1', 'motor_thruster', 'b40b683230acacb4cdc01d98cb7350a55fff80a4a5ef2dff76e6739e8810f114', 'Estanque Principal (Zona Central)', 'online', NOW(), '{"controller_model": "ODrive S1", "interface": "UART ASCII", "control_mode": "pid"}'::jsonb),
-    ('c0000000-0000-0000-0000-000000000003', 'Aireador Auxiliar ESC (Banco de Pruebas)', 'motor_thruster', 'e981fdf139c8da231cddd2bbdc40b5e372b9407320df6cd462747019cf9404a6', 'Laboratorio / Banco de Pruebas', 'offline', NOW(), '{"controller_model": "ESP32-S3 ESC PWM", "status": "auxiliary_backup"}'::jsonb),
-    ('d0000000-0000-0000-0000-000000000004', 'Bomba Dosificadora Peristáltica (Planta 1)', 'motor_thruster', encode(digest('ESP32_PUMP_KEY_2026', 'sha256'), 'hex'), 'Laboratorio / Banco de Pruebas', 'offline', NOW(), '{"controller_model": "ESP32 + AS5600", "actuator": "12V Peristaltic Pump", "dosing_unit": "mL"}'::jsonb)
+    ('b0000000-0000-0000-0000-000000000002', 'Controlador ODrive S1 - Estanque 1', 'aerator_motor', 'b40b683230acacb4cdc01d98cb7350a55fff80a4a5ef2dff76e6739e8810f114', 'Estanque Principal (Zona Central)', 'online', NOW(), '{"controller_model": "ODrive S1", "interface": "UART ASCII", "control_mode": "pid", "role": "odrive"}'::jsonb),
+    ('c0000000-0000-0000-0000-000000000003', 'Aireador Auxiliar ESC (Banco de Pruebas)', 'mixer', 'e981fdf139c8da231cddd2bbdc40b5e372b9407320df6cd462747019cf9404a6', 'Laboratorio / Banco de Pruebas', 'offline', NOW(), '{"controller_model": "ESP32-S3 ESC PWM", "actuator": "Blue Robotics T200", "status": "auxiliary_backup", "role": "mixer"}'::jsonb),
+    ('d0000000-0000-0000-0000-000000000004', 'Bomba Dosificadora Peristáltica (Planta 1)', 'dosing_pump', encode(digest('ESP32_PUMP_KEY_2026', 'sha256'), 'hex'), 'Laboratorio / Banco de Pruebas', 'offline', NOW(), '{"controller_model": "ESP32 + AS5600", "actuator": "12V Peristaltic Pump", "dosing_unit": "mL", "role": "pump"}'::jsonb)
 ON CONFLICT (id) DO UPDATE SET 
     name = EXCLUDED.name,
     type = EXCLUDED.type,
@@ -240,6 +288,10 @@ ALTER TABLE public.system_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sensor_telemetry_bulk ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.odrive_telemetry_bulk ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.mixer_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.mixer_telemetry ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.pump_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.pump_telemetry ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.manual_overrides_log ENABLE ROW LEVEL SECURITY;
 
 -- Política de lectura pública/anónima autorizada para la dashboard (o lectura autenticada si hay Supabase Auth)
 CREATE POLICY "Permitir lectura publica de dispositivos" ON public.devices FOR SELECT USING (true);
@@ -253,6 +305,10 @@ CREATE POLICY "Permitir lectura de configuraciones" ON public.system_settings FO
 CREATE POLICY "Permitir full en sensor bulk" ON public.sensor_telemetry_bulk FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Permitir full en odrive bulk" ON public.odrive_telemetry_bulk FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Permitir full en mixer events" ON public.mixer_events FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Permitir full en mixer telemetry" ON public.mixer_telemetry FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Permitir full en pump events" ON public.pump_events FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Permitir full en pump telemetry" ON public.pump_telemetry FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Permitir full en manual overrides log" ON public.manual_overrides_log FOR ALL USING (true) WITH CHECK (true);
 
 -- Habilitar Realtime para tablas críticas en Supabase
 ALTER PUBLICATION supabase_realtime ADD TABLE public.sensor_readings;

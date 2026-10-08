@@ -12,6 +12,7 @@ import {
 } from '@/lib/demoData';
 import { DashboardSummaryResponse, Device, Experiment } from '@/types';
 import { getSystemState } from '@/lib/systemState';
+import { DEVICE_ID_BY_ROLE, resolveDeviceRole } from '@/lib/deviceRoles';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -69,9 +70,10 @@ export async function GET(req: NextRequest) {
       .from('devices')
       .select('*');
 
-    // Sensor de Oxígeno Disuelto: vincular preferentemente por ID de la última lectura o por tipo
+    // Sensor de Oxígeno Disuelto: vinculado por ROL (sensor) o por la lectura más reciente
     let rawSensor = (latestSensorReading?.device_id && rawDevices?.find(d => d.id === latestSensorReading.device_id))
-      || rawDevices?.find(d => d.type === 'sensor_do') 
+      || rawDevices?.find(d => d.id === DEVICE_ID_BY_ROLE.sensor)
+      || rawDevices?.find(d => resolveDeviceRole(d) === 'sensor')
       || null;
 
     if (!rawSensor) {
@@ -117,11 +119,12 @@ export async function GET(req: NextRequest) {
       last_seen_at: sensorLastSeen
     });
 
-    // Actuador Principal: ODrive S1 (M8325s)
-    let rawMotor = rawDevices?.find(d => 
-      d.id === 'b0000000-0000-0000-0000-000000000002' || 
-      (d.type === 'motor_thruster' && (d.metadata?.controller_model === 'ODrive S1' || d.name?.includes('ODrive')))
-    ) || rawDevices?.find(d => d.type === 'motor_thruster' && d.id !== rawSensor?.id) || null;
+    // Actuador Principal: ODrive S1 (M8325s).
+    // Se resuelve por ROL y no por heurística de texto: antes se buscaba "ODrive" en el nombre o
+    // `metadata.controller_model`, lo que se rompía al renombrar el dispositivo en la BD.
+    let rawMotor = rawDevices?.find(d => d.id === DEVICE_ID_BY_ROLE.odrive)
+      || rawDevices?.find(d => resolveDeviceRole(d) === 'odrive')
+      || null;
 
     if (rawMotor) {
       // Normalizar nombre oficial de ODrive S1 si la BD aún tenía nombre legacy
@@ -169,17 +172,16 @@ export async function GET(req: NextRequest) {
       };
     }
 
-    // Actuador Auxiliar: Blue Robotics T-200 con ESC
-    let rawEsc = rawDevices?.find(d => 
-      d.id === 'c0000000-0000-0000-0000-000000000003' || 
-      (d.type === 'motor_thruster' && d.id !== rawMotor?.id)
-    ) || null;
+    // Actuador Auxiliar: Blue Robotics T-200 con ESC. Resuelto por ROL (mixer).
+    let rawEsc = rawDevices?.find(d => d.id === DEVICE_ID_BY_ROLE.mixer)
+      || rawDevices?.find(d => resolveDeviceRole(d) === 'mixer')
+      || null;
 
     if (!rawEsc) {
       rawEsc = {
         id: 'c0000000-0000-0000-0000-000000000003',
         name: 'Aireador Auxiliar ESC (Banco de Pruebas)',
-        type: 'motor_thruster',
+        type: 'mixer',
         location: 'Laboratorio / Banco de Pruebas',
         status: 'offline',
         last_seen_at: null,

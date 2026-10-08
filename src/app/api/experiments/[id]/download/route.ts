@@ -2,11 +2,77 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { demoExperiments, generateDemoHistory } from '@/lib/demoData';
 import { resolveItemEpochMs } from '@/lib/bulk';
+import { DEVICE_ID_BY_ROLE } from '@/lib/deviceRoles';
 import { Experiment } from '@/types';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 export const fetchCache = 'force-no-store';
+
+/** Campos que el CSV realmente consume (ver cabecera más abajo). */
+const SENSOR_CSV_COLUMNS = 'recorded_at,dissolved_oxygen_raw,oxygen_saturation_raw,water_temperature_raw';
+const MOTOR_CSV_COLUMNS = 'recorded_at,is_on,speed_percent,rpm,voltage_v,current_a';
+
+/**
+ * Respaldo desde las tablas legacy cuando la tabla de ARCHIVO del rol no tiene filas.
+ *
+ * Motivo: las tablas `sensor_telemetry_bulk` / `odrive_telemetry_bulk` pueden no existir todavía
+ * (la migración es aparte) o haberse creado después de una prueba. Sin este respaldo la descarga
+ * devolvía un CSV con solo la cabecera, que es exactamente lo que rompía el flujo hacia MATLAB.
+ *
+ * `motor_telemetry` guarda `speed_percent` (0-100), no RPM: se reconstruyen con la escala 0-600 RPM
+ * del ODrive, igual que hace /api/dashboard/history.
+ */
+async function fetchLegacyWindow(experiment: Experiment) {
+  const startedAt = experiment.started_at;
+  const endedAt = experiment.ended_at;
+  if (!startedAt) return { sensor: [] as any[], motor: [] as any[] };
+
+  let sensorQuery = supabaseAdmin
+    .from('sensor_readings')
+    .select(SENSOR_CSV_COLUMNS)
+    .eq('device_id', DEVICE_ID_BY_ROLE.sensor)
+    .gte('recorded_at', startedAt)
+    .order('recorded_at', { ascending: true })
+    .limit(20000);
+  if (endedAt) sensorQuery = sensorQuery.lte('recorded_at', endedAt);
+
+  let motorQuery = supabaseAdmin
+    .from('motor_telemetry')
+    .select(MOTOR_CSV_COLUMNS)
+    .eq('device_id', DEVICE_ID_BY_ROLE.odrive)
+    .gte('recorded_at', startedAt)
+    .order('recorded_at', { ascending: true })
+    .limit(20000);
+  if (endedAt) motorQuery = motorQuery.lte('recorded_at', endedAt);
+
+  const [sensorRes, motorRes] = await Promise.all([sensorQuery, motorQuery]);
+
+  if (sensorRes.error) console.warn('[download] Respaldo de sensor_readings falló:', sensorRes.error.message);
+  if (motorRes.error) console.warn('[download] Respaldo de motor_telemetry falló:', motorRes.error.message);
+
+  const sensor = (sensorRes.data || []).map((r: any) => ({
+    datetime: r.recorded_at,
+    do_milli_mg_l: r.dissolved_oxygen_raw,
+    do_sat_deci_pct: r.oxygen_saturation_raw,
+    water_temp_centi: r.water_temperature_raw
+  }));
+
+  const motor = (motorRes.data || []).map((r: any) => {
+    const speedPercent = Number(r.speed_percent ?? 0);
+    const rpm = r.rpm !== undefined && r.rpm !== null
+      ? Number(r.rpm)
+      : (r.is_on ? Math.round((speedPercent / 100) * 600) : 0);
+    return {
+      datetime: r.recorded_at,
+      actual_rpm: rpm,
+      voltage_v: r.voltage_v !== undefined && r.voltage_v !== null ? Number(r.voltage_v) : undefined,
+      current_a: r.current_a !== undefined && r.current_a !== null ? Number(r.current_a) : undefined
+    };
+  });
+
+  return { sensor, motor };
+}
 
 /**
  * GET: Descargar archivo CSV con las mediciones registradas durante el experimento
@@ -66,8 +132,23 @@ export async function GET(
           .eq('experiment_id', id);
 
         // Flatten payload_json arrays
-        const flatSensor = (sensorBulk || []).flatMap((row: any) => row.payload_json || []);
-        const flatMotor = (motorBulk || []).flatMap((row: any) => row.payload_json || []);
+        let flatSensor = (sensorBulk || []).flatMap((row: any) => row.payload_json || []);
+        let flatMotor = (motorBulk || []).flatMap((row: any) => row.payload_json || []);
+
+        // Respaldo legacy: si la tabla de archivo no existe o el experimento quedó sin filas,
+        // se reconstruye la ventana desde sensor_readings / motor_telemetry para no entregar un
+        // CSV vacío (el flujo de análisis en MATLAB depende de esta descarga).
+        if (flatSensor.length === 0 || flatMotor.length === 0) {
+          const legacy = await fetchLegacyWindow(experiment);
+          if (flatSensor.length === 0 && legacy.sensor.length > 0) {
+            flatSensor = legacy.sensor;
+            console.info(`[download] Archivo de sensor vacío: usando respaldo legacy (${legacy.sensor.length} filas).`);
+          }
+          if (flatMotor.length === 0 && legacy.motor.length > 0) {
+            flatMotor = legacy.motor;
+            console.info(`[download] Archivo de motor vacío: usando respaldo legacy (${legacy.motor.length} filas).`);
+          }
+        }
 
         // Align by time. If motor has exact ms, we can join. But sensor is at 0.2 Hz (every 5000ms), 
         // Motor is at 5 Hz (every 200ms).

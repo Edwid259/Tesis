@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { authenticateDevice } from '@/lib/deviceAuth';
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { MAX_BULK_ITEMS, resolveItemEpochMs, NO_STORE_HEADERS } from '@/lib/bulk';
+import { archiveRolePayload } from '@/lib/telemetryArchive';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 export const fetchCache = 'force-no-store';
 
 export async function POST(req: NextRequest) {
-  const { device, errorResponse } = await authenticateDevice(req, 'sensor_do');
+  const { device, role, errorResponse } = await authenticateDevice(req, 'sensor_do', 'sensor');
   if (errorResponse) return errorResponse;
 
   try {
@@ -22,17 +23,10 @@ export async function POST(req: NextRequest) {
     const payload = rawPayload.slice(0, MAX_BULK_ITEMS);
 
     if (isSupabaseConfigured() && device) {
-      // 1. Insert into bulk archive table
-      const { error: bulkError } = await supabaseAdmin
-        .from('sensor_telemetry_bulk')
-        .insert({
-          experiment_id: experiment_id || 'idle',
-          payload_json: payload,
-          created_at: new Date().toISOString()
-        });
-        
-      if (bulkError) {
-        console.error('Error insertando bulk OD:', bulkError);
+      // 1. Archivar la serie completa en la tabla dedicada del rol.
+      const archiveOutcome = await archiveRolePayload(role ?? 'sensor', experiment_id || 'idle', payload);
+      if (archiveOutcome === 'missing_table') {
+        console.warn('[sensor_bulk] Archivado omitido: falta sensor_telemetry_bulk (migración pendiente).');
       }
 
       // 2. Map and bulk insert into sensor_readings for real-time dashboard visualization

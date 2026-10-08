@@ -55,7 +55,6 @@ export async function POST(req: NextRequest) {
         recorded_at: recordedAt,
         is_on,
         speed_percent,
-        rpm: item.rpm !== undefined ? Number(item.rpm) : actual_rpm,
         pwm_us,
         voltage_v,
         current_a,

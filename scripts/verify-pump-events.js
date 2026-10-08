@@ -60,8 +60,12 @@ assert.ok(mixerRoute.includes('mixer_events'), 'La ruta del mixer debe escribir 
 ok('Rutas de eventos compatibles con el esquema existente (sin DDL obligatorio)');
 
 console.log('\n[Test 5] Registro de dispositivo y migración opcional...');
-assert.ok(auth.includes('d0000000-0000-0000-0000-000000000004'), 'deviceAuth debe conocer la bomba');
-assert.ok(auth.includes('ESP32_PUMP'), 'deviceAuth debe aceptar la clave de la bomba');
+// La identidad y el rol de cada nodo viven en el registro canónico (deviceRoles.ts); deviceAuth
+// lo consume. Antes las claves estaban duplicadas dentro de deviceAuth.
+const rolesLib = read('src/lib/deviceRoles.ts');
+assert.ok(rolesLib.includes('d0000000-0000-0000-0000-000000000004'), 'El registro debe conocer la bomba');
+assert.ok(rolesLib.includes('ESP32_PUMP'), 'El registro debe aceptar la clave de la bomba');
+assert.ok(auth.includes('KNOWN_DEVICES'), 'deviceAuth debe consumir el registro canónico');
 assert.ok(migration.includes('pump_events'), 'La migración debe crear pump_events');
 assert.ok(migration.includes('manual_overrides_log'), 'La migración debe crear manual_overrides_log');
 assert.ok(migration.includes('executed_rtc_ms'), 'La migración debe añadir executed_rtc_ms');

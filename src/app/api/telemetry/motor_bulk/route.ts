@@ -2,17 +2,27 @@ import { NextRequest, NextResponse } from 'next/server';
 import { authenticateDevice } from '@/lib/deviceAuth';
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { MAX_BULK_ITEMS, resolveItemEpochMs, NO_STORE_HEADERS } from '@/lib/bulk';
+import { archiveRolePayload, ArchiveOutcome } from '@/lib/telemetryArchive';
+import { isActuatorRole } from '@/lib/deviceRoles';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 export const fetchCache = 'force-no-store';
 
-/** Cadencia de persistencia en motor_telemetry (dashboard en vivo). La fidelidad 5 Hz vive en odrive_telemetry_bulk. */
+/** Cadencia de persistencia en motor_telemetry (dashboard en vivo). La fidelidad completa vive en la tabla de archivo del rol. */
 const DASHBOARD_DOWNSAMPLE_MS = 1000;
 
 export async function POST(req: NextRequest) {
-  const { device, errorResponse } = await authenticateDevice(req, 'motor_thruster');
+  // Autorización por ROL: el ODrive, el mixer y la bomba comparten el tipo legacy `motor_thruster`,
+  // así que el tipo no basta para decidir de quién es la telemetría ni a qué tabla archivarla.
+  const { device, role, errorResponse } = await authenticateDevice(req, undefined, undefined);
   if (errorResponse) return errorResponse;
+  if (!isActuatorRole(role)) {
+    return NextResponse.json(
+      { error: 'Endpoint reservado a actuadores (odrive/mixer/pump)' },
+      { status: 403, headers: NO_STORE_HEADERS }
+    );
+  }
 
   try {
     const body = await req.json();
@@ -26,6 +36,9 @@ export async function POST(req: NextRequest) {
 
     // Borrador resoluble a partir del experimento activo cuando el firmware envía "backend_resolved".
     let resolvedExperimentId: string = experiment_id || 'idle';
+    let archiveOutcome: ArchiveOutcome = 'skipped';
+    let ingestWarning: string | null = null;
+    let ingestedRows = 0;
 
     if (isSupabaseConfigured() && device) {
       let final_experiment_id = experiment_id;
@@ -44,18 +57,14 @@ export async function POST(req: NextRequest) {
           }
       }
 
-      // 1. Insert into bulk archive table
+      // 1. Archivar la serie completa en la tabla dedicada del ROL (odrive/mixer/pump).
       resolvedExperimentId = final_experiment_id || 'idle';
-      const { error: bulkError } = await supabaseAdmin
-        .from('odrive_telemetry_bulk')
-        .insert({
-          experiment_id: resolvedExperimentId,
-          payload_json: payload,
-          created_at: new Date().toISOString()
-        });
-        
-      if (bulkError) {
-        console.error('Error insertando bulk ODrive:', bulkError);
+      const archiveOutcomeResult = await archiveRolePayload(role, resolvedExperimentId, payload);
+      archiveOutcome = archiveOutcomeResult;
+      if (archiveOutcomeResult === 'missing_table') {
+        // La tabla de archivo del rol aún no existe (migración pendiente). Se conserva el
+        // submuestreo en motor_telemetry para no dejar al dashboard sin datos.
+        console.warn(`[motor_bulk] Archivado omitido para rol '${role}' (tabla inexistente).`);
       }
 
       // 2. Map and bulk insert into motor_telemetry for real-time dashboard visualization.
@@ -79,13 +88,17 @@ export async function POST(req: NextRequest) {
             : (item.rpm !== undefined ? Number(item.rpm) : null);
           const target_rpm = item.target_rpm !== undefined ? Number(item.target_rpm) : null;
 
+          // IMPORTANTE: solo columnas que existen realmente en `motor_telemetry`. Enviar una
+          // columna inexistente hace que PostgREST rechace el INSERT COMPLETO (PGRST204) y el lote
+          // entero se pierde. Ocurría con `rpm`: la tabla no la tiene en producción (aunque
+          // schema.sql la declare), así que ninguna lectura de telemetría llegaba a guardarse.
+          // El dashboard deriva las RPM de `speed_percent` (ver /api/dashboard/history).
           return {
             _epochMs: epochMs,
             device_id: device.id,
             recorded_at: recordedAt,
             is_on,
             speed_percent,
-            rpm: actual_rpm,
             pwm_us,
             voltage_v,
             current_a,
@@ -102,7 +115,14 @@ export async function POST(req: NextRequest) {
           .from('motor_telemetry')
           .insert(rowsToInsert);
 
-        if (insertError) console.error('Error insertando en motor_telemetry:', insertError);
+        if (insertError) {
+          // Antes solo se registraba en consola y la ruta devolvía `success: true` igualmente, así
+          // que el firmware reportaba HTTP 200 y la pérdida de datos pasaba inadvertida.
+          console.error('Error insertando en motor_telemetry:', insertError);
+          ingestWarning = `${insertError.code || 'error'}: ${insertError.message}`;
+        } else {
+          ingestedRows = rowsToInsert.length;
+        }
       }
 
       await supabaseAdmin.from('devices').update({
@@ -114,7 +134,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       received: payload.length,
-      experiment_id: resolvedExperimentId
+      ingested: ingestedRows,
+      experiment_id: resolvedExperimentId,
+      archived: archiveOutcome,
+      ...(ingestWarning ? { warning: ingestWarning } : {})
     }, { headers: NO_STORE_HEADERS });
   } catch (error: any) {
     return NextResponse.json({ error: 'Payload error' }, { status: 400, headers: NO_STORE_HEADERS });

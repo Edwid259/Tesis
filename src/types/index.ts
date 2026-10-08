@@ -1,6 +1,24 @@
 // Definición de tipos de datos para AquaControl IoT & Supabase
 
-export type DeviceType = 'sensor_do' | 'motor_thruster' | 'gateway';
+/**
+ * Tipo de hardware en `devices.type`.
+ *
+ * `motor_thruster` es legacy: agrupaba bajo una sola etiqueta al aireador ODrive, al mixer T-200 y
+ * a la bomba dosificadora, lo que impedía enrutar comandos y telemetría sin ambigüedad.
+ * Los roles concretos son `aerator_motor`, `mixer` y `dosing_pump`; el valor legacy se mantiene
+ * porque la restricción CHECK de producción todavía lo admite y hay filas antiguas con él.
+ */
+export type DeviceType =
+  | 'sensor_do'
+  | 'aerator_motor'
+  | 'mixer'
+  | 'dosing_pump'
+  | 'motor_thruster'
+  | 'gateway';
+
+/** Rol funcional inequívoco de un nodo. Ver `src/lib/deviceRoles.ts`. */
+export type DeviceRole = 'sensor' | 'odrive' | 'mixer' | 'pump';
+
 export type DeviceStatus = 'online' | 'offline' | 'warning' | 'error';
 export type AlertSeverity = 'info' | 'warning' | 'critical';
 export type AlertStatus = 'activa' | 'reconocida' | 'resuelta';
@@ -11,6 +29,8 @@ export interface Device {
   id: string;
   name: string;
   type: DeviceType;
+  /** Rol funcional derivado del `device_id` canónico (ver `deviceRoles.ts`). */
+  role?: DeviceRole;
   api_key_hash?: string;
   location: string;
   status: DeviceStatus;

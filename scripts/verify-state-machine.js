@@ -40,9 +40,16 @@ ok('GET/POST + validación de los 3 estados + difusión');
 
 console.log('\n[Test 2] Difusión y auditoría...');
 assert.ok(stateLib.includes('export const DEVICE_IDS'), 'Debe existir el registro canónico de nodos');
+// La identidad y el rol de cada nodo viven en el registro canónico (deviceRoles.ts); systemState
+// los consume. Se verifica allí la lista completa de roles.
+const rolesLib = read('src/lib/deviceRoles.ts');
 for (const role of ['sensor', 'odrive', 'mixer', 'pump']) {
-  assert.ok(new RegExp(`${role}:`).test(stateLib), `El registro debe incluir el nodo '${role}'`);
+  assert.ok(new RegExp(`role: '${role}'`).test(rolesLib), `El registro debe incluir el rol '${role}'`);
 }
+// El difusor despacha por ROL (no por tipo legacy) usando el mapa canónico.
+assert.ok(stateLib.includes('ROLE_BY_DEVICE_ID'), 'systemState debe despachar por rol vía el mapa canónico');
+assert.ok(stateLib.includes("role === 'mixer'") && stateLib.includes("role === 'odrive'"),
+  'systemState debe distinguir mixer y odrive por rol');
 assert.ok(stateLib.includes('ALL_DEVICE_IDS'), 'Debe difundirse a todos los nodos');
 assert.ok(stateLib.includes('broadcastState'), 'Debe existir broadcastState');
 assert.ok(stateLib.includes("action: 'set_state'"), 'El comando difundido debe ser set_state');

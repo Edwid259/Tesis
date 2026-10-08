@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateDevice } from '@/lib/deviceAuth';
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
+import { isActuatorRole } from '@/lib/deviceRoles';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,7 +17,7 @@ export async function POST(
   const { id } = params;
 
   // 1. Autenticar ESP32 (cualquier dispositivo registrado)
-  const { device, errorResponse } = await authenticateDevice(req);
+  const { device, role, errorResponse } = await authenticateDevice(req);
   if (errorResponse) return errorResponse;
 
   try {
@@ -131,7 +132,7 @@ export async function POST(
     }
 
     // Actualizar metadatos de sensor si se enviaron cambios de estado (e.g. monitor_active)
-    if (device.type === 'sensor_do' && sensor_state) {
+    if (role === 'sensor' && sensor_state) {
       const currentMeta = device.metadata || {};
       await supabaseAdmin
         .from('devices')
@@ -142,8 +143,10 @@ export async function POST(
         .eq('id', device.id);
     }
 
-    // Actualizar telemetría actual de motor si se recibió la velocidad confirmada
-    if (actual_speed_percent !== undefined && device.type === 'motor_thruster') {
+    // Telemetría de motor: se confirma la velocidad recibida en el ACK.
+    // El rol identifica al actuador sin ambigüedad (antes el tipo legacy `motor_thruster`
+    // agrupaba al aireador, al mixer y a la bomba).
+    if (actual_speed_percent !== undefined && isActuatorRole(role)) {
       const speed = Number(actual_speed_percent);
       const pwm_us = Math.round(1500 + (speed / 100) * 400);
       await supabaseAdmin.from('motor_telemetry').insert({

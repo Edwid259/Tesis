@@ -1,86 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin, hashApiKey, isSupabaseConfigured } from '@/lib/supabase';
-import { Device, DeviceType } from '@/types';
+import { Device, DeviceRole } from '@/types';
+import { KNOWN_DEVICES, KnownDevice, resolveDeviceRole } from '@/lib/deviceRoles';
 
-interface KnownDeviceConfig {
-  id: string;
-  name: string;
-  type: DeviceType;
-  location: string;
-  metadata: Record<string, any>;
-  envVarKeys: string[];
-  defaultTokens: string[];
+function toDevice(cfg: KnownDevice): Device {
+  return {
+    id: cfg.id,
+    name: cfg.name,
+    type: cfg.type,
+    role: cfg.role,
+    location: cfg.location,
+    status: 'online',
+    last_seen_at: new Date().toISOString(),
+    metadata: cfg.metadata,
+    created_at: new Date().toISOString()
+  };
 }
-
-const KNOWN_DEVICES: KnownDeviceConfig[] = [
-  {
-    id: 'a0000000-0000-0000-0000-000000000001',
-    name: 'Sensor Óptico OD - Estanque 1',
-    type: 'sensor_do',
-    location: 'Estanque Principal (Zona Norte)',
-    metadata: { sensor_model: 'Aqualabo DIGISENS', interface: 'Modbus RS485' },
-    envVarKeys: ['ESP32_OD_SENSOR', 'ESP32_SENSOR_DEVICE_KEY'],
-    defaultTokens: ['ESP32_OD_SENSOR', 'ESP32_SENSOR_KEY_2026']
-  },
-  {
-    id: 'b0000000-0000-0000-0000-000000000002',
-    name: 'Controlador ODrive S1 - Estanque 1',
-    type: 'motor_thruster',
-    location: 'Estanque Principal (Zona Central)',
-    metadata: { controller_model: 'ODrive S1', interface: 'UART ASCII', control_mode: 'pid' },
-    envVarKeys: ['ESP32_ODRIVE', 'ESP32_MOTOR_DEVICE_KEY'],
-    defaultTokens: ['ESP32_ODRIVE', 'ESP32_MOTOR_KEY_2026']
-  },
-  {
-    id: 'c0000000-0000-0000-0000-000000000003',
-    name: 'Aireador Auxiliar ESC (Banco de Pruebas)',
-    type: 'motor_thruster',
-    location: 'Laboratorio / Banco de Pruebas',
-    metadata: { controller_model: 'ESP32-S3 ESC PWM', status: 'auxiliary_backup' },
-    envVarKeys: ['ESP32_T_200', 'ESP32_ESC_DEVICE_KEY'],
-    defaultTokens: ['ESP32_T_200', 'ESP32_ESC_KEY_2026']
-  },
-  {
-    id: 'd0000000-0000-0000-0000-000000000004',
-    name: 'Bomba Dosificadora Peristáltica (Planta 1)',
-    type: 'motor_thruster',
-    location: 'Laboratorio / Banco de Pruebas',
-    metadata: { controller_model: 'ESP32 + AS5600', actuator: '12V Peristaltic Pump', dosing_unit: 'mL' },
-    envVarKeys: ['ESP32_PUMP', 'ESP32_PUMP_DEVICE_KEY'],
-    defaultTokens: ['ESP32_PUMP', 'ESP32_PUMP_KEY_2026']
-  }
-];
 
 function resolveKnownDevice(deviceKey: string): Device | null {
   for (const cfg of KNOWN_DEVICES) {
     // 1. Coincidencia directa con tokens por defecto o alias conocidos
     if (cfg.defaultTokens.includes(deviceKey)) {
-      return {
-        id: cfg.id,
-        name: cfg.name,
-        type: cfg.type,
-        location: cfg.location,
-        status: 'online',
-        last_seen_at: new Date().toISOString(),
-        metadata: cfg.metadata,
-        created_at: new Date().toISOString()
-      };
+      return toDevice(cfg);
     }
 
     // 2. Coincidencia con variables de entorno (e.g. configuradas en Vercel)
     for (const envKey of cfg.envVarKeys) {
       const envVal = process.env[envKey];
       if (envVal && (envVal === deviceKey || envKey === deviceKey)) {
-        return {
-          id: cfg.id,
-          name: cfg.name,
-          type: cfg.type,
-          location: cfg.location,
-          status: 'online',
-          last_seen_at: new Date().toISOString(),
-          metadata: cfg.metadata,
-          created_at: new Date().toISOString()
-        };
+        return toDevice(cfg);
       }
     }
   }
@@ -88,14 +36,23 @@ function resolveKnownDevice(deviceKey: string): Device | null {
 }
 
 /**
- * Autentica una petición de un dispositivo IoT (ESP32) mediante la cabecera X-Device-Key
+ * Autoriza una petición de dispositivo (`X-Device-Key`).
+ *
+ * Prefiere `expectedRole` sobre `expectedType`: el rol identifica al nodo sin ambigüedad, mientras
+ * que `motor_thruster` agrupaba a tres actuadores distintos. `expectedType` se mantiene para las
+ * rutas antiguas.
  */
-export async function authenticateDevice(req: NextRequest, expectedType?: string): Promise<{ device: Device | null; errorResponse: NextResponse | null }> {
+export async function authenticateDevice(
+  req: NextRequest,
+  expectedType?: string,
+  expectedRole?: DeviceRole
+): Promise<{ device: Device | null; role: DeviceRole | null; errorResponse: NextResponse | null }> {
   const deviceKey = req.headers.get('x-device-key') || req.headers.get('X-Device-Key') || req.nextUrl?.searchParams?.get('device_key') || null;
 
   if (!deviceKey) {
     return {
       device: null,
+      role: null,
       errorResponse: NextResponse.json(
         { error: 'Encabezado X-Device-Key faltante' },
         { status: 401 }
@@ -106,10 +63,25 @@ export async function authenticateDevice(req: NextRequest, expectedType?: string
   // Nivel 1: Verificar contra dispositivos conocidos y variables de entorno de Vercel
   const knownDevice = resolveKnownDevice(deviceKey);
   if (knownDevice) {
-    // Validar tipo esperado si fue especificado por la ruta
-    if (expectedType && knownDevice.type !== expectedType) {
+    const role = resolveDeviceRole(knownDevice);
+
+    // El rol manda: es inequívoco y no depende de la migración de `devices.type`.
+    if (expectedRole && role !== expectedRole) {
       return {
         device: null,
+        role: null,
+        errorResponse: NextResponse.json(
+          { error: `Dispositivo '${knownDevice.name}' (rol: ${role ?? 'desconocido'}) no autorizado para endpoints de rol '${expectedRole}'` },
+          { status: 403 }
+        )
+      };
+    }
+
+    // Compatibilidad con rutas antiguas: acepta tanto el tipo específico como el legacy.
+    if (expectedType && !typeSatisfiesExpected(knownDevice, expectedType)) {
+      return {
+        device: null,
+        role: null,
         errorResponse: NextResponse.json(
           { error: `Dispositivo '${knownDevice.name}' no autorizado para endpoints de tipo '${expectedType}'` },
           { status: 403 }
@@ -121,6 +93,8 @@ export async function authenticateDevice(req: NextRequest, expectedType?: string
     // Esto garantiza que el device_id exista para claves foráneas sin requerir SQL manual
     if (isSupabaseConfigured()) {
       try {
+        // Se sincroniza con el tipo LEGACY mientras la migración no esté aplicada: escribir
+        // `aerator_motor` con la restricción CHECK antigua haría fallar el upsert.
         await supabaseAdmin.from('devices').upsert({
           id: knownDevice.id,
           name: knownDevice.name,
@@ -130,19 +104,32 @@ export async function authenticateDevice(req: NextRequest, expectedType?: string
           status: 'online',
           last_seen_at: new Date().toISOString(),
           metadata: knownDevice.metadata
-        }, { onConflict: 'id' });
+        }, { onConflict: 'id' }).then(undefined, async () => {
+          // Reintento con el tipo legacy admitido por el CHECK de producción actual.
+          await supabaseAdmin.from('devices').upsert({
+            id: knownDevice.id,
+            name: knownDevice.name,
+            type: 'motor_thruster',
+            api_key_hash: hashApiKey(deviceKey),
+            location: knownDevice.location,
+            status: 'online',
+            last_seen_at: new Date().toISOString(),
+            metadata: { ...knownDevice.metadata, role: knownDevice.role }
+          }, { onConflict: 'id' });
+        });
       } catch (upsertErr) {
         console.warn('Advertencia al sincronizar dispositivo en Supabase:', upsertErr);
       }
     }
 
-    return { device: knownDevice, errorResponse: null };
+    return { device: knownDevice, role, errorResponse: null };
   }
 
   // Si Supabase no está configurado y no coincidió con ninguna clave conocida
   if (!isSupabaseConfigured()) {
     return {
       device: null,
+      role: null,
       errorResponse: NextResponse.json(
         { error: 'Clave de dispositivo no reconocida en modo local' },
         { status: 403 }
@@ -159,7 +146,7 @@ export async function authenticateDevice(req: NextRequest, expectedType?: string
       .select('*')
       .eq('api_key_hash', keyHash);
 
-    if (expectedType) {
+    if (expectedType && expectedRole === undefined) {
       query = query.eq('type', expectedType);
     }
 
@@ -168,6 +155,7 @@ export async function authenticateDevice(req: NextRequest, expectedType?: string
     if (error || !devices || devices.length === 0) {
       return {
         device: null,
+        role: null,
         errorResponse: NextResponse.json(
           { error: 'Clave de dispositivo inválida o no autorizada' },
           { status: 403 }
@@ -176,6 +164,18 @@ export async function authenticateDevice(req: NextRequest, expectedType?: string
     }
 
     const device = devices[0] as Device;
+    const role = resolveDeviceRole(device);
+
+    if (expectedRole && role !== expectedRole) {
+      return {
+        device: null,
+        role: null,
+        errorResponse: NextResponse.json(
+          { error: `Dispositivo no autorizado para endpoints de rol '${expectedRole}'` },
+          { status: 403 }
+        )
+      };
+    }
 
     // Actualizar último contacto y estado del dispositivo
     await supabaseAdmin
@@ -187,16 +187,29 @@ export async function authenticateDevice(req: NextRequest, expectedType?: string
       })
       .eq('id', device.id);
 
-    return { device, errorResponse: null };
+    return { device, role, errorResponse: null };
   } catch (err: any) {
     console.error('Error en autenticación de dispositivo:', err);
     return {
       device: null,
+      role: null,
       errorResponse: NextResponse.json(
         { error: 'Error interno en verificación de seguridad' },
         { status: 500 }
       )
     };
   }
+}
+
+/**
+ * Un nodo satisface el tipo esperado si su tipo específico coincide, o si el tipo esperado es el
+ * legacy `motor_thruster` y el nodo es un actuador (que es lo que esa etiqueta significaba).
+ */
+function typeSatisfiesExpected(device: Device, expectedType: string): boolean {
+  if (device.type === expectedType) return true;
+  const role = resolveDeviceRole(device);
+  if (expectedType === 'motor_thruster') return role !== null && role !== 'sensor';
+  if (expectedType === 'sensor_do') return role === 'sensor' || device.type === 'sensor_do';
+  return false;
 }
 
