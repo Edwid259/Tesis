@@ -117,8 +117,8 @@ export async function GET(req: NextRequest) {
         id: command.id,
         command_type: command.command_type,
         speed_percent: command.speed_percent !== null ? Number(command.speed_percent) : undefined,
-        target_rad_s: command.target_rad_s !== null ? Number(command.target_rad_s) : undefined,
-        target_rpm: command.target_rpm !== null ? Number(command.target_rpm) : undefined,
+        target_rad_s: payload?.target_rad_s !== undefined ? Number(payload.target_rad_s) : undefined,
+        target_rpm: payload?.target_rpm !== undefined ? Number(payload.target_rpm) : undefined,
         pwm_us: command.pwm_us,
         payload,
         created_at: command.created_at
