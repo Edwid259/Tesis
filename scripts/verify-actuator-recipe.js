@@ -123,11 +123,17 @@ assert.ok(!/candidate\.payload\?\.action\?\.includes/.test(pendingRoute),
   'REGRESIÓN: no debe clasificar leyendo candidate.payload (undefined en producción)');
 ok('El fallback solo sirve órdenes globales; clasificación con payload real');
 
-console.log('\n[Test 9] /api/experiments apaga el mixer en los casos de aireación...');
-assert.ok(expRoute.includes("recipe.mixer === 'on' ? 'start_mixer' : 'stop_mixer'"),
-  'Debe emitir start_mixer/stop_mixer según la receta');
-assert.ok(expRoute.includes('recipe.motor.mode !== \'off\''), 'Debe armar el ODrive solo si la receta lo pide');
-ok('Arranque de experimento determinista por protocolo');
+console.log('\n[Test 9] /api/experiments despliega la receta por protocolo...');
+assert.ok(expRoute.includes("recipe.mixer === 'on'"), 'Debe derivar la intención del mixer de la receta');
+assert.ok(expRoute.includes("recipe.motor.mode !== 'off'"), 'Debe armar el ODrive solo si la receta lo pide');
+// Un único camino de despliegue: el mismo `broadcastState` de la barra del orquestador. Si se
+// encolaran comandos sueltos, el SENSOR no se enteraría de que hay experimento y no muestrearía.
+assert.ok(expRoute.includes('broadcastState'), 'Debe difundir con broadcastState (incluye al sensor)');
+assert.ok((expRoute.match(/broadcastState\(/g) || []).length >= 2,
+  'Tanto el arranque como la parada deben difundir el estado a todos los nodos');
+assert.ok(!/device_id: DEVICE_IDS\.mixer/.test(expRoute),
+  'REGRESIÓN: no debe encolar comandos de actuador a mano (dejaba al sensor fuera)');
+ok('Arranque y parada despliegan la receta por protocolo a los 4 nodos');
 
 console.log('\n====================================================');
 console.log(` TODAS LAS COMPROBACIONES PASARON CORRECTAMENTE (9/9) `);

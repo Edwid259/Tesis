@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { demoExperiments } from '@/lib/demoData';
 import { Experiment } from '@/types';
-import { enqueueCommand, setSystemState, DEVICE_IDS } from '@/lib/systemState';
+import { enqueueCommand, setSystemState, broadcastState, DEVICE_IDS } from '@/lib/systemState';
 import { resolveActuatorRecipe } from '@/lib/experimentRecipe';
 
 export const dynamic = 'force-dynamic';
@@ -173,52 +173,25 @@ export async function POST(req: NextRequest) {
       inMemoryExperiments.unshift(newExperiment);
     }
 
-    // V4: orquestación — fijar estado global y armar actuadores según la planta objetivo.
+    // V4: orquestación — fijar estado global y difundir la intención a TODOS los nodos.
+    // Se usa `broadcastState` (la misma vía que la barra del orquestador) en lugar de encolar
+    // comandos a mano: así el SENSOR también recibe `set_state ACTIVE_EXPERIMENT` y empieza a
+    // muestrear. Antes sólo se avisaba a mixer y ODrive, de modo que un experimento iniciado desde
+    // el asistente dejaba a la boya sin muestrear y la curva salía vacía.
     const armed: string[] = [];
     try {
-      await setSystemState({
+      const next = await setSystemState({
         state: 'ACTIVE_EXPERIMENT',
         experiment_id: newExperiment.id,
         updated_by: `Experimento (${case_type})`
       });
 
-      // Receta canónica desde el registro (misma función que usa el orquestador al difundir el
-      // estado). Antes esta lógica estaba duplicada aquí y el broadcast no la aplicaba, que es
-      // exactamente lo que hacía que el mixer quedara encendido y el ODrive sin armar.
       const recipe = resolveActuatorRecipe(newExperiment);
+      if (recipe.mixer === 'on') armed.push('mixer');
+      else armed.push('mixer_off');
+      if (recipe.motor.mode !== 'off') armed.push('odrive');
 
-      // Mixer: intención explícita. ON solo en Planta 1 (disolver el Na2SO3); OFF en los casos
-      // de aireación, donde la agitación contaminaría la identificación de KLa.
-      const mixerOk = await enqueueCommand({
-        device_id: DEVICE_IDS.mixer,
-        command_type: 'set_speed',
-        payload: {
-          action: recipe.mixer === 'on' ? 'start_mixer' : 'stop_mixer',
-          experiment_id: newExperiment.id
-        },
-        requested_by: `Orquestador (mixer ${recipe.mixer.toUpperCase()})`
-      });
-      if (mixerOk) armed.push(recipe.mixer === 'on' ? 'mixer' : 'mixer_off');
-
-      // ODrive: armar según la receta (manual con escalón de RPM, o PID con setpoint de OD).
-      if (recipe.motor.mode !== 'off') {
-        const ok = await enqueueCommand({
-          device_id: DEVICE_IDS.odrive,
-          // `set_speed` es el tipo permitido por el CHECK de producción; la intención real
-          // (mode/target_do/throttle) viaja en payload.action = 'set_mode'.
-          command_type: 'set_speed',
-          payload: {
-            action: 'set_mode',
-            mode: recipe.motor.mode,
-            experiment_id: newExperiment.id,
-            ...(recipe.motor.mode === 'pid'
-              ? { target_do: recipe.motor.target_do }
-              : { manual_throttle_pct: recipe.motor.throttle_pct })
-          },
-          requested_by: 'Orquestador (ODrive arm)'
-        });
-        if (ok) armed.push('odrive');
-      }
+      await broadcastState(next, `Orquestador (${case_type})`);
     } catch (orchErr) {
       console.warn('Advertencia en orquestación de experimento:', orchErr);
     }
@@ -251,45 +224,23 @@ export async function PATCH(req: NextRequest) {
       experiment_id
     };
 
-    // V4: desarmar actuadores y volver a IDLE al detener el experimento.
+    // V4: desarmar TODOS los actuadores y volver a IDLE al detener el experimento.
+    // Se difunde con `broadcastState` (no comandos sueltos) para que el SENSOR también reciba
+    // `set_state IDLE`: si no, la boya sigue muestreando y grabando en SD después de parar.
     try {
-      await enqueueCommand({
-        device_id: DEVICE_IDS.mixer,
-        command_type: 'stop',
-        payload: { action: 'stop_mixer', experiment_id },
-        requested_by: 'Orquestador (mixer OFF)'
-      });
-      await enqueueCommand({
-        device_id: DEVICE_IDS.odrive,
-        command_type: 'stop',
-        payload: { action: 'stop', experiment_id },
-        requested_by: 'Orquestador (ODrive OFF)'
-      });
-      await setSystemState({
+      const next = await setSystemState({
         state: 'IDLE',
         experiment_id: null,
         updated_by: 'Experimento (stop_experiment)'
       });
+      await broadcastState(next, 'Orquestador (stop_experiment)');
     } catch (orchErr) {
       console.warn('Advertencia desarmando actuadores:', orchErr);
     }
 
     if (isSupabaseConfigured()) {
-      // 1. Enviar orden stop al sensor con fallback si no existe columna payload
-      const baseStopCmd = {
-        device_id: targetDeviceId,
-        command_type: 'stop',
-        speed_percent: 0,
-        pwm_us: 1500,
-        status: 'pending',
-        requested_by: 'Experimento (stop_experiment)',
-        error_message: JSON.stringify(stopPayload)
-      };
-      const resStopWithPayload = await supabaseAdmin.from('control_commands').insert({ ...baseStopCmd, payload: stopPayload });
-      if (resStopWithPayload.error) {
-        await supabaseAdmin.from('control_commands').insert(baseStopCmd);
-      }
-
+      // 1. Metadatos del sensor: reflejar que ya no hay monitor activo.
+      // El `stop` ya se encoló vía broadcastState para los 4 nodos; aquí sólo se limpia la metadata.
       // 2. Actualizar metadatos de sensor
       const { data: dev } = await supabaseAdmin
         .from('devices')
