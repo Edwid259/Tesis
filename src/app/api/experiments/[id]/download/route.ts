@@ -11,7 +11,8 @@ export const fetchCache = 'force-no-store';
 
 /** Campos que el CSV realmente consume (ver cabecera más abajo). */
 const SENSOR_CSV_COLUMNS = 'recorded_at,dissolved_oxygen_raw,oxygen_saturation_raw,water_temperature_raw';
-const MOTOR_CSV_COLUMNS = 'recorded_at,is_on,speed_percent,rpm,voltage_v,current_a';
+// Sin `rpm`: esa columna no existe en producción y pedirla hace fallar la consulta entera (42703).
+const MOTOR_CSV_COLUMNS = 'recorded_at,is_on,speed_percent,voltage_v,current_a';
 
 /**
  * Respaldo desde las tablas legacy cuando la tabla de ARCHIVO del rol no tiene filas.
@@ -59,13 +60,12 @@ async function fetchLegacyWindow(experiment: Experiment) {
   }));
 
   const motor = (motorRes.data || []).map((r: any) => {
+    // `motor_telemetry` no tiene columna `rpm`: las RPM se reconstruyen desde `speed_percent`
+    // con la escala 0-600 RPM del ODrive (mismo criterio que /api/dashboard/history).
     const speedPercent = Number(r.speed_percent ?? 0);
-    const rpm = r.rpm !== undefined && r.rpm !== null
-      ? Number(r.rpm)
-      : (r.is_on ? Math.round((speedPercent / 100) * 600) : 0);
     return {
       datetime: r.recorded_at,
-      actual_rpm: rpm,
+      actual_rpm: r.is_on ? Math.round((speedPercent / 100) * 600) : 0,
       voltage_v: r.voltage_v !== undefined && r.voltage_v !== null ? Number(r.voltage_v) : undefined,
       current_a: r.current_a !== undefined && r.current_a !== null ? Number(r.current_a) : undefined
     };

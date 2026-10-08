@@ -87,6 +87,9 @@ console.log('\n[Test 5] Ningún INSERT envía la columna inexistente rpm...');
 // `motor_telemetry` no tiene la columna `rpm` en producción; enviarla hace fallar TODO el INSERT.
 assert.ok(!/^\s*rpm:/m.test(motorBulk), 'REGRESIÓN: motor_bulk no debe enviar la columna rpm');
 assert.ok(!/^\s*rpm:/m.test(motorSingle), 'REGRESIÓN: motor (single) no debe enviar la columna rpm');
+// Tampoco se puede PEDIR en un SELECT: la consulta falla entera y devuelve vacío.
+assert.ok(!/MOTOR_CSV_COLUMNS = '[^']*rpm/.test(downloadRoute),
+  'REGRESIÓN: el respaldo no debe seleccionar la columna rpm inexistente');
 assert.ok(motorBulk.includes('warning: ingestWarning'), 'motor_bulk debe reportar el fallo de ingesta');
 assert.ok(motorBulk.includes('ingested: ingestedRows'), 'motor_bulk debe reportar las filas almacenadas');
 // La migración alinea el esquema declarado con producción.
