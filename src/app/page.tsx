@@ -8,6 +8,7 @@ import { ClearDatabaseModal } from '@/components/ClearDatabaseModal';
 import { MotorControlPanel } from '@/components/MotorControlPanel';
 import { MixerControlPanel } from '@/components/MixerControlPanel';
 import { ManualOverridePanel } from '@/components/ManualOverridePanel';
+import { OrchestratorBar } from '@/components/OrchestratorBar';
 import { ChartsSection } from '@/components/ChartsSection';
 import { EventsTable } from '@/components/EventsTable';
 import { AlertsPanel } from '@/components/AlertsPanel';
@@ -16,7 +17,8 @@ import {
   HistoryDataPoint,
   MotorEvent,
   Alert,
-  Experiment
+  Experiment,
+  OrchestratorState
 } from '@/types';
 import {
   demoThresholds,
@@ -150,10 +152,40 @@ export default function DashboardPage() {
             requested_by: 'Manual Override (God Mode)'
           })
        });
+       // V4: bitácora de seguridad de la anulación manual (no bloqueante).
+       fetch('/api/events/override', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({
+           action,
+           target,
+           device_id,
+           requested_by: 'Manual Override (God Mode)',
+           experiment_id: activeExperiment?.id || null
+         })
+       }).catch(() => {});
        fetchDashboardData(true);
      } catch (err) {
        console.error('Error enviando force command:', err);
      }
+  };
+
+  /** V4: transiciona la máquina de estados global del orquestador. */
+  const handleChangeSystemState = async (state: OrchestratorState) => {
+    try {
+      await fetch('/api/system/state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          state,
+          experiment_id: state === 'ACTIVE_EXPERIMENT' ? (activeExperiment?.id ?? null) : null,
+          requested_by: 'Operador Web (Orquestador)'
+        })
+      });
+      await fetchDashboardData(true);
+    } catch (err) {
+      console.error('Error cambiando estado del orquestador:', err);
+    }
   };
 
   return (
@@ -194,6 +226,14 @@ export default function DashboardPage() {
             <span className="text-slate-400">Ubicación: <strong className="text-slate-200">Zona de Cultivo Norte</strong></span>
           </div>
         </div>
+
+        {/* Barra de Orquestación Global (IDLE / ACTIVE_EXPERIMENT / MANUAL_OVERRIDE) */}
+        <section>
+          <OrchestratorBar
+            systemState={summary.systemState || null}
+            onChangeState={handleChangeSystemState}
+          />
+        </section>
 
         {/* 1. Tarjetas de Resumen KPI y Semáforo de Oxígeno Disuelto */}
         <section>

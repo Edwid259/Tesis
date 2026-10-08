@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateDevice } from '@/lib/deviceAuth';
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
+import { MAX_BULK_ITEMS, resolveItemEpochMs, NO_STORE_HEADERS } from '@/lib/bulk';
 
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+export const fetchCache = 'force-no-store';
 
 export async function POST(req: NextRequest) {
   const { device, errorResponse } = await authenticateDevice(req, 'sensor_do');
@@ -10,11 +13,13 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { experiment_id, payload } = body;
-    
-    if (!payload || !Array.isArray(payload)) {
-       return NextResponse.json({ error: 'Payload must be an array' }, { status: 400 });
+    const rawPayload = body?.payload;
+    const { experiment_id } = body;
+
+    if (!rawPayload || !Array.isArray(rawPayload)) {
+      return NextResponse.json({ error: 'Payload must be an array' }, { status: 400, headers: NO_STORE_HEADERS });
     }
+    const payload = rawPayload.slice(0, MAX_BULK_ITEMS);
 
     if (isSupabaseConfigured() && device) {
       // 1. Insert into bulk archive table
@@ -37,9 +42,11 @@ export async function POST(req: NextRequest) {
         const satDivider = 10.0;
         const batteryDivider = 1000.0;
 
+        const epochMs = resolveItemEpochMs(item);
+
         return {
           device_id: device.id,
-          recorded_at: item.datetime || new Date().toISOString(),
+          recorded_at: epochMs !== null ? new Date(epochMs).toISOString() : new Date().toISOString(),
           seconds_since_2000: item.seconds_since_2000,
           dissolved_oxygen_raw: item.do_milli_mg_l,
           dissolved_oxygen_mg_l: item.do_milli_mg_l !== undefined ? Number((item.do_milli_mg_l / doDivider).toFixed(3)) : 0,
@@ -94,10 +101,11 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      inserted: payload.length,
       has_command: Boolean(pendingCommand),
       pending_command: pendingCommand
-    });
+    }, { headers: NO_STORE_HEADERS });
   } catch (error: any) {
-    return NextResponse.json({ error: 'Payload error' }, { status: 400 });
+    return NextResponse.json({ error: 'Payload error' }, { status: 400, headers: NO_STORE_HEADERS });
   }
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { demoExperiments, generateDemoHistory } from '@/lib/demoData';
+import { resolveItemEpochMs } from '@/lib/bulk';
 import { Experiment } from '@/types';
 
 export const dynamic = 'force-dynamic';
@@ -75,7 +76,7 @@ export async function GET(
 
         // Insert motor data (higher frequency)
         for (const m of flatMotor) {
-          const t = m.rtc_timestamp_ms;
+          const t = resolveItemEpochMs(m);
           if (t && t > 0) {
             timeMap.set(t, { motor: m, sensor: null });
           }
@@ -83,19 +84,10 @@ export async function GET(
 
         // Insert sensor data
         for (const s of flatSensor) {
-          // Sensor might not have exact rtc_timestamp_ms if not fully synced, 
-          // or we can use seconds_since_2000
-          // Let's assume sensor JSON has rtc_timestamp_ms or we fall back to seconds_since_2000 * 1000
-          let t = s.rtc_timestamp_ms;
-          if (!t) {
-            if (s.seconds_since_2000) {
-               // Approximate
-               t = s.seconds_since_2000 * 1000;
-            } else {
-               t = new Date(s.datetime).getTime();
-            }
-          }
-          
+          // El sensor puede no traer rtc_timestamp_ms si no está sincronizado; se cae a
+          // seconds_since_2000 (con offset 2000) o al datetime ISO.
+          const t = resolveItemEpochMs(s);
+          if (t === null) continue;
           if (!timeMap.has(t)) {
             timeMap.set(t, { motor: null, sensor: s });
           } else {

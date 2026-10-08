@@ -11,6 +11,7 @@ import {
   demoExperiments
 } from '@/lib/demoData';
 import { DashboardSummaryResponse, Device, Experiment } from '@/types';
+import { getSystemState } from '@/lib/systemState';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -251,6 +252,9 @@ export async function GET(req: NextRequest) {
       activeExperiment = sensorDevice.metadata.active_experiment;
     }
 
+    // 8. Estado global del orquestador (AquaControl V4) — IDLE | ACTIVE_EXPERIMENT | MANUAL_OVERRIDE
+    const systemState = await getSystemState();
+
     const summary: DashboardSummaryResponse = {
       sensorDevice,
       motorDevice,
@@ -259,6 +263,7 @@ export async function GET(req: NextRequest) {
       latestMotorTelemetry,
       latestEscTelemetry,
       activeExperiment,
+      systemState,
       thresholds: demoThresholds,
       activeAlertsCount: activeAlertsCount || 0,
       systemHealth,

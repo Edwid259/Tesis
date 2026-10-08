@@ -39,6 +39,15 @@ const KNOWN_DEVICES: KnownDeviceConfig[] = [
     metadata: { controller_model: 'ESP32-S3 ESC PWM', status: 'auxiliary_backup' },
     envVarKeys: ['ESP32_T_200', 'ESP32_ESC_DEVICE_KEY'],
     defaultTokens: ['ESP32_T_200', 'ESP32_ESC_KEY_2026']
+  },
+  {
+    id: 'd0000000-0000-0000-0000-000000000004',
+    name: 'Bomba Dosificadora Peristáltica (Planta 1)',
+    type: 'motor_thruster',
+    location: 'Laboratorio / Banco de Pruebas',
+    metadata: { controller_model: 'ESP32 + AS5600', actuator: '12V Peristaltic Pump', dosing_unit: 'mL' },
+    envVarKeys: ['ESP32_PUMP', 'ESP32_PUMP_DEVICE_KEY'],
+    defaultTokens: ['ESP32_PUMP', 'ESP32_PUMP_KEY_2026']
   }
 ];
 

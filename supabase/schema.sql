@@ -173,12 +173,14 @@ ON CONFLICT (key) DO NOTHING;
 -- Token ESP32 Sensor: "ESP32_OD_SENSOR" -> SHA256: 2ae50779e5419027c848d0677699c75164387685b30ed1db9f801c611af0dd5e
 -- Token ESP32 Motor:  "ESP32_ODRIVE"    -> SHA256: b40b683230acacb4cdc01d98cb7350a55fff80a4a5ef2dff76e6739e8810f114
 -- Token ESP32 ESC:    "ESP32_T_200"     -> SHA256: e981fdf139c8da231cddd2bbdc40b5e372b9407320df6cd462747019cf9404a6
+-- Token ESP32 Bomba:  "ESP32_PUMP_KEY_2026" -> SHA256: ver migración 20261007_v4_orchestration.sql
 -- ==============================================================================
 INSERT INTO public.devices (id, name, type, api_key_hash, location, status, last_seen_at, metadata)
 VALUES
     ('a0000000-0000-0000-0000-000000000001', 'Sensor Óptico OD - Estanque 1', 'sensor_do', '2ae50779e5419027c848d0677699c75164387685b30ed1db9f801c611af0dd5e', 'Estanque Principal (Zona Norte)', 'online', NOW(), '{"sensor_model": "Aqualabo DIGISENS", "interface": "Modbus RS485"}'::jsonb),
     ('b0000000-0000-0000-0000-000000000002', 'Controlador ODrive S1 - Estanque 1', 'motor_thruster', 'b40b683230acacb4cdc01d98cb7350a55fff80a4a5ef2dff76e6739e8810f114', 'Estanque Principal (Zona Central)', 'online', NOW(), '{"controller_model": "ODrive S1", "interface": "UART ASCII", "control_mode": "pid"}'::jsonb),
-    ('c0000000-0000-0000-0000-000000000003', 'Aireador Auxiliar ESC (Banco de Pruebas)', 'motor_thruster', 'e981fdf139c8da231cddd2bbdc40b5e372b9407320df6cd462747019cf9404a6', 'Laboratorio / Banco de Pruebas', 'offline', NOW(), '{"controller_model": "ESP32-S3 ESC PWM", "status": "auxiliary_backup"}'::jsonb)
+    ('c0000000-0000-0000-0000-000000000003', 'Aireador Auxiliar ESC (Banco de Pruebas)', 'motor_thruster', 'e981fdf139c8da231cddd2bbdc40b5e372b9407320df6cd462747019cf9404a6', 'Laboratorio / Banco de Pruebas', 'offline', NOW(), '{"controller_model": "ESP32-S3 ESC PWM", "status": "auxiliary_backup"}'::jsonb),
+    ('d0000000-0000-0000-0000-000000000004', 'Bomba Dosificadora Peristáltica (Planta 1)', 'motor_thruster', encode(digest('ESP32_PUMP_KEY_2026', 'sha256'), 'hex'), 'Laboratorio / Banco de Pruebas', 'offline', NOW(), '{"controller_model": "ESP32 + AS5600", "actuator": "12V Peristaltic Pump", "dosing_unit": "mL"}'::jsonb)
 ON CONFLICT (id) DO UPDATE SET 
     name = EXCLUDED.name,
     type = EXCLUDED.type,

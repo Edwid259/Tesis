@@ -26,6 +26,14 @@ interface ChartsSectionProps {
   activeExperiment?: Experiment | null;
 }
 
+interface PerturbationMarker {
+  id: string;
+  action: string;
+  device_id: string;
+  executed_rtc_ms: number | null;
+  created_at: string;
+}
+
 export const ChartsSection: React.FC<ChartsSectionProps> = ({
   history,
   thresholds,
@@ -60,6 +68,49 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
       setActiveTab('experiment');
     }
   }, [activeExperiment?.id, activeExperiment?.status]);
+
+  // V4: perturbaciones físicas con instante exacto de ejecución (ACK rtc_timestamp_ms),
+  // usadas para marcar en la gráfica el milisegundo real de la inyección sin latencia de red.
+  const [perturbations, setPerturbations] = useState<PerturbationMarker[]>([]);
+
+  useEffect(() => {
+    if (!activeExperiment || activeExperiment.status !== 'active') {
+      setPerturbations([]);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch('/api/commands/recent?hours=6&limit=20', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setPerturbations(Array.isArray(data.perturbations) ? data.perturbations : []);
+      } catch {
+        /* silencioso: los marcadores son informativos */
+      }
+    };
+    load();
+    const timer = setInterval(load, 5000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [activeExperiment?.id, activeExperiment?.status]);
+
+  const perturbationMarkers = useMemo(() => {
+    if (!perturbations.length || experimentData.length === 0) return [];
+    return perturbations
+      .map(p => {
+        const target = p.executed_rtc_ms as number;
+        let best = experimentData[0];
+        let bestDiff = Math.abs(new Date(best.timestamp).getTime() - target);
+        for (const pt of experimentData) {
+          const diff = Math.abs(new Date(pt.timestamp).getTime() - target);
+          if (diff < bestDiff) { bestDiff = diff; best = pt; }
+        }
+        return { id: p.id, label: best.timeLabel, action: p.action, diffMs: bestDiff };
+      })
+      // Solo se dibuja si la muestra más cercana está a <= 15 s de la perturbación real.
+      .filter(m => m.diffMs <= 15000)
+      .slice(0, 5);
+  }, [perturbations, experimentData]);
 
   const ranges = [
     { label: 'Última Hora', value: '1h' },
@@ -458,6 +509,19 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                   dot={{ r: 3, fill: '#14b8a6', stroke: '#0f766e', strokeWidth: 1 }}
                   activeDot={{ r: 5, fill: '#14b8a6', stroke: '#ffffff', strokeWidth: 2 }}
                 />
+
+                {/* V4: marcadores de perturbación (dosis/bomba/mixer/escalón) al instante exacto de ejecución */}
+                {perturbationMarkers.map((marker) => (
+                  <ReferenceLine
+                    key={marker.id}
+                    yAxisId="left"
+                    x={marker.label}
+                    stroke="#f59e0b"
+                    strokeWidth={1.5}
+                    strokeDasharray="2 2"
+                    label={{ value: marker.action, fill: '#f59e0b', fontSize: 9, angle: -90, position: 'insideTopLeft' }}
+                  />
+                ))}
               </AreaChart>
             ) : (
               // 4. GRÁFICA DE VELOCIDAD DE AIREADOR ODRIVE S1 (M8325s) EN RPM

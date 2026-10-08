@@ -21,7 +21,7 @@ export async function POST(
 
   try {
     const body = await req.json().catch(() => ({}));
-    const { success = true, actual_speed_percent, error_message, sensor_state } = body;
+    const { success = true, actual_speed_percent, error_message, sensor_state, rtc_timestamp_ms } = body;
 
     if (!isSupabaseConfigured() || !device) {
       return NextResponse.json({
@@ -30,17 +30,65 @@ export async function POST(
       });
     }
 
-    const { data: command, error } = await supabaseAdmin
+    // V4: el ACK puede arrastrar el instante exacto de ejecución física (epoch UTC ms) para
+    // anular la latencia de red al graficar la perturbación. Se persiste dentro de payload JSONB
+    // (sin requerir migración DDL) como `executed_rtc_ms`.
+    const executedRtcMs = Number.isFinite(Number(rtc_timestamp_ms)) && Number(rtc_timestamp_ms) > 0
+      ? Number(rtc_timestamp_ms)
+      : null;
+    const latencyMs = executedRtcMs !== null ? Math.max(0, Date.now() - executedRtcMs) : null;
+
+    const { data: existing } = await supabaseAdmin
       .from('control_commands')
-      .update({
-        status: success ? 'acknowledged' : 'failed',
-        executed_at: new Date().toISOString(),
-        error_message: error_message || null
-      })
+      .select('payload, error_message')
+      .eq('id', id)
+      .eq('device_id', device.id)
+      .maybeSingle();
+
+    let mergedPayload: Record<string, any> | null = null;
+    if (existing) {
+      let base = existing.payload;
+      if ((!base || typeof base !== 'object' || Object.keys(base).length === 0) &&
+          typeof existing.error_message === 'string' && existing.error_message.trim().startsWith('{')) {
+        try { base = JSON.parse(existing.error_message); } catch { /* ignore */ }
+      }
+      if (base && typeof base === 'object') {
+        mergedPayload = {
+          ...base,
+          ...(executedRtcMs !== null ? { executed_rtc_ms: executedRtcMs } : {}),
+          ...(latencyMs !== null ? { ack_latency_ms: latencyMs } : {})
+        };
+      }
+    }
+
+    const updateFields: Record<string, any> = {
+      status: success ? 'acknowledged' : 'failed',
+      executed_at: new Date().toISOString(),
+      error_message: error_message || null
+    };
+    if (mergedPayload) updateFields.payload = mergedPayload;
+
+    let { data: command, error } = await supabaseAdmin
+      .from('control_commands')
+      .update(updateFields)
       .eq('id', id)
       .eq('device_id', device.id)
       .select()
       .single();
+
+    // Robusto ante instalaciones sin columna `payload`: reintenta sin ella.
+    if (error && updateFields.payload) {
+      delete updateFields.payload;
+      const retry = await supabaseAdmin
+        .from('control_commands')
+        .update(updateFields)
+        .eq('id', id)
+        .eq('device_id', device.id)
+        .select()
+        .single();
+      command = retry.data;
+      error = retry.error;
+    }
 
     if (error || !command) {
       return NextResponse.json({ error: 'Comando no encontrado o error en actualización' }, { status: 404 });
@@ -74,7 +122,8 @@ export async function POST(
     return NextResponse.json({
       success: true,
       message: 'Confirmación de comando procesada exitosamente',
-      command_id: id
+      command_id: id,
+      ...(latencyMs !== null ? { latency_ms: latencyMs } : {})
     });
 
   } catch (error: any) {

@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { demoSensorDevice } from '@/lib/demoData';
+import { getSystemState } from '@/lib/systemState';
 
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+export const fetchCache = 'force-no-store';
+
+/** Acciones de "receta automática" que se abortan mientras el orquestador está en MANUAL_OVERRIDE. */
+const RECIPE_ACTIONS = ['start_monitor', 'start_experiment', 'set_sampling_rate'];
 
 /**
  * Crea una nueva orden de control para el aireador desde la interfaz de usuario
@@ -26,6 +32,21 @@ export async function POST(req: NextRequest) {
       original_command_type: command_type,
       ...payload
     };
+
+    // V4: en MANUAL_OVERRIDE el operador humano tiene control directo; se abortan las recetas automáticas.
+    const isEmergency = command_type === 'emergency_stop' || payload?.action === 'emergency_stop';
+    if (!isEmergency && RECIPE_ACTIONS.includes(String(effectivePayload.action))) {
+      const current = await getSystemState();
+      if (current.state === 'MANUAL_OVERRIDE') {
+        return NextResponse.json(
+          {
+            error: 'Sistema en MANUAL_OVERRIDE: las recetas automáticas están abortadas. Use el interruptor maestro para volver a IDLE.',
+            state: current.state
+          },
+          { status: 409 }
+        );
+      }
+    }
 
     let speed = 0;
     let pwm_us = 1500;
@@ -94,7 +115,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Normalizar command_type para satisfacer el constraint de la BD: ('start', 'stop', 'set_speed', 'emergency_stop', 'reboot')
-    const allowedDbTypes = ['start', 'stop', 'set_speed', 'emergency_stop', 'reboot'];
+    const allowedDbTypes = ['start', 'stop', 'set_speed', 'emergency_stop', 'reboot', 'set_mode', 'set_config'];
     let dbCommandType = command_type;
     if (!allowedDbTypes.includes(dbCommandType)) {
       if (isSensorCommand) {

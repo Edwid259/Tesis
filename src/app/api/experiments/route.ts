@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { demoExperiments } from '@/lib/demoData';
 import { Experiment } from '@/types';
+import { enqueueCommand, setSystemState, DEVICE_IDS } from '@/lib/systemState';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -60,7 +61,14 @@ export async function POST(req: NextRequest) {
       name,
       sampling_rate_sec = 5,
       csv_filename,
-      description = ''
+      description = '',
+      case_type = 'planta_2_step',
+      setpoint_do = null,
+      controller_type = 'none',
+      plant_target = 'both',
+      sampling_rate_sensor_sec,
+      sampling_rate_motor_sec,
+      parameters = {}
     } = body;
 
     if (!name || name.trim() === '') {
@@ -81,6 +89,14 @@ export async function POST(req: NextRequest) {
       sampling_rate_sec: Math.max(1, Math.min(60, Number(sampling_rate_sec))),
       csv_filename: finalFilename,
       status: 'active',
+      case_type,
+      setpoint_do: setpoint_do !== null && setpoint_do !== undefined ? Number(setpoint_do) : null,
+      controller_type,
+      plant_target,
+      // V4 §2.2: frecuencias desacopladas por dinámica de planta.
+      sampling_rate_sensor_sec: Number(sampling_rate_sensor_sec ?? sampling_rate_sec ?? 5),
+      sampling_rate_motor_sec: Number(sampling_rate_motor_sec ?? 0.2),
+      parameters: parameters && typeof parameters === 'object' ? parameters : {},
       started_at: new Date().toISOString(),
       ended_at: null,
       total_samples: 0
@@ -156,10 +172,55 @@ export async function POST(req: NextRequest) {
       inMemoryExperiments.unshift(newExperiment);
     }
 
+    // V4: orquestación — fijar estado global y armar actuadores según la planta objetivo.
+    const armed: string[] = [];
+    try {
+      await setSystemState({
+        state: 'ACTIVE_EXPERIMENT',
+        experiment_id: newExperiment.id,
+        updated_by: `Experimento (${case_type})`
+      });
+
+      const plant = String(plant_target || 'both');
+      const wantsMixer = plant === 'planta_1' || plant === 'both';
+      const wantsOdrive = plant === 'planta_2' || plant === 'both' || case_type === 'closed_loop';
+
+      if (wantsMixer) {
+        const ok = await enqueueCommand({
+          device_id: DEVICE_IDS.mixer,
+          command_type: 'set_speed',
+          payload: { action: 'start_mixer', experiment_id: newExperiment.id },
+          requested_by: 'Orquestador (mixer ON)'
+        });
+        if (ok) armed.push('mixer');
+      }
+
+      if (wantsOdrive) {
+        const usePid = controller_type === 'pid' || case_type === 'closed_loop';
+        const ok = await enqueueCommand({
+          device_id: DEVICE_IDS.odrive,
+          command_type: 'set_mode',
+          payload: {
+            action: 'set_mode',
+            mode: usePid ? 'pid' : 'manual',
+            experiment_id: newExperiment.id,
+            ...(usePid && newExperiment.setpoint_do !== null
+              ? { target_do: newExperiment.setpoint_do }
+              : { manual_throttle_pct: Number(parameters?.step_throttle_pct ?? 50) })
+          },
+          requested_by: 'Orquestador (ODrive arm)'
+        });
+        if (ok) armed.push('odrive');
+      }
+    } catch (orchErr) {
+      console.warn('Advertencia en orquestación de experimento:', orchErr);
+    }
+
     return NextResponse.json({
       success: true,
       message: `Experimento '${newExperiment.name}' iniciado exitosamente`,
-      experiment: newExperiment
+      experiment: newExperiment,
+      armed
     });
 
   } catch (err: any) {
@@ -177,11 +238,34 @@ export async function PATCH(req: NextRequest) {
     const body = await req.json();
     const { experiment_id } = body;
 
-    const targetDeviceId = 'a0000000-0000-0000-0000-000000000001';
+    const targetDeviceId = DEVICE_IDS.sensor;
     const stopPayload = {
       action: 'stop_experiment',
       experiment_id
     };
+
+    // V4: desarmar actuadores y volver a IDLE al detener el experimento.
+    try {
+      await enqueueCommand({
+        device_id: DEVICE_IDS.mixer,
+        command_type: 'stop',
+        payload: { action: 'stop_mixer', experiment_id },
+        requested_by: 'Orquestador (mixer OFF)'
+      });
+      await enqueueCommand({
+        device_id: DEVICE_IDS.odrive,
+        command_type: 'stop',
+        payload: { action: 'stop', experiment_id },
+        requested_by: 'Orquestador (ODrive OFF)'
+      });
+      await setSystemState({
+        state: 'IDLE',
+        experiment_id: null,
+        updated_by: 'Experimento (stop_experiment)'
+      });
+    } catch (orchErr) {
+      console.warn('Advertencia desarmando actuadores:', orchErr);
+    }
 
     if (isSupabaseConfigured()) {
       // 1. Enviar orden stop al sensor con fallback si no existe columna payload

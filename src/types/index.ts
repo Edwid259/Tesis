@@ -128,6 +128,13 @@ export interface Experiment {
   status: 'active' | 'completed' | 'stopped';
   mode?: 'manual' | 'pid' | 'fuzzy';
   plant_target?: 'planta_1' | 'planta_2' | 'both';
+  // V4: protocolos experimentales (Planta 1 desoxigenación, Planta 2 escalón, Caso B lazo cerrado)
+  case_type?: 'planta_1_deox' | 'planta_2_step' | 'closed_loop';
+  setpoint_do?: number | null;
+  controller_type?: 'none' | 'pid' | 'on_off';
+  sampling_rate_sensor_sec?: number;
+  sampling_rate_motor_sec?: number;
+  parameters?: Record<string, any>;
   started_at: string;
   ended_at?: string | null;
   total_samples: number;
@@ -135,6 +142,41 @@ export interface Experiment {
   max_do?: number | null;
   avg_do?: number | null;
   metadata?: Record<string, any>;
+}
+
+/** Estados globales del orquestador AquaControl V4 */
+export type OrchestratorState = 'IDLE' | 'ACTIVE_EXPERIMENT' | 'MANUAL_OVERRIDE';
+
+export interface OverrideFlags {
+  master: boolean;
+  pump: boolean;
+  mixer: boolean;
+  odrive: boolean;
+}
+
+export interface SystemState {
+  state: OrchestratorState;
+  since: string;
+  experiment_id: string | null;
+  override: OverrideFlags;
+  updated_by: string;
+}
+
+export interface MixerEvent {
+  id?: number;
+  experiment_id: string;
+  event_type: 'start_mixer' | 'stop_mixer' | 'dose_pump' | 'manual_confirmation';
+  status?: string | null;
+  rtc_timestamp_ms?: number | null;
+  created_at?: string;
+}
+
+export interface CommandAckPayload {
+  success?: boolean;
+  actual_speed_percent?: number;
+  rtc_timestamp_ms?: number;
+  sensor_state?: Record<string, any>;
+  error_message?: string;
 }
 
 export interface ControlCommand {
@@ -184,6 +226,7 @@ export interface DashboardSummaryResponse {
   latestMotorTelemetry: MotorTelemetry | null;
   latestEscTelemetry?: MotorTelemetry | null;
   activeExperiment?: Experiment | null;
+  systemState?: SystemState | null;
   thresholds: SystemThresholds;
   activeAlertsCount: number;
   systemHealth: 'optimal' | 'warning' | 'critical' | 'offline';

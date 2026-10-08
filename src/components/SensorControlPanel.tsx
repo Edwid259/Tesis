@@ -82,6 +82,11 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
   const [expDesc, setExpDesc] = useState<string>('Evaluación de transferencia de O2 y dinámica de saturación.');
   const [expMode, setExpMode] = useState<'manual' | 'pid' | 'fuzzy'>('manual');
   const [expPlantTarget, setExpPlantTarget] = useState<'planta_1' | 'planta_2' | 'both'>('both');
+  // V4: protocolo experimental (Planta 1 / Planta 2 / Caso B lazo cerrado)
+  const [expCaseType, setExpCaseType] = useState<'planta_1_deox' | 'planta_2_step' | 'closed_loop'>('planta_2_step');
+  const [expSetpoint, setExpSetpoint] = useState<number>(5.0);
+  const [expControllerType, setExpControllerType] = useState<'none' | 'pid' | 'on_off'>('none');
+  const [expStepThrottle, setExpStepThrottle] = useState<number>(50);
 
   // Cronómetro en tiempo real para experimento activo
   const [elapsedSec, setElapsedSec] = useState<number>(0);
@@ -314,7 +319,14 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
           csv_filename: expFilename,
           description: expDesc,
           mode: expMode,
-          plant_target: expPlantTarget
+          plant_target: expPlantTarget,
+          // V4: protocolos experimentales y frecuencias desacopladas
+          case_type: expCaseType,
+          setpoint_do: expCaseType === 'closed_loop' ? expSetpoint : null,
+          controller_type: expCaseType === 'closed_loop' ? 'pid' : expControllerType,
+          sampling_rate_sensor_sec: expRate,
+          sampling_rate_motor_sec: 0.2,
+          parameters: { step_throttle_pct: expStepThrottle }
         })
       });
 
@@ -620,6 +632,52 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
               />
             </div>
             
+            {/* Caso Experimental (Protocolos V4) */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-slate-300">Protocolo Experimental:</label>
+              <select
+                value={expCaseType}
+                onChange={(e) => {
+                  const value = e.target.value as 'planta_1_deox' | 'planta_2_step' | 'closed_loop';
+                  setExpCaseType(value);
+                  if (value === 'planta_1_deox') { setExpPlantTarget('planta_1'); setExpControllerType('none'); setExpMode('manual'); }
+                  else if (value === 'planta_2_step') { setExpPlantTarget('planta_2'); setExpControllerType('none'); setExpMode('manual'); }
+                  else { setExpPlantTarget('both'); setExpControllerType('pid'); setExpMode('pid'); }
+                }}
+                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-cyan-500"
+              >
+                <option value="planta_1_deox">Planta 1 · Desoxigenación química (caída de OD)</option>
+                <option value="planta_2_step">Planta 2 · Respuesta al escalón (KLa)</option>
+                <option value="closed_loop">Caso B · Evaluación de lazo cerrado (PID)</option>
+              </select>
+            </div>
+
+            {/* Parámetros según el protocolo */}
+            {(expCaseType === 'closed_loop' || expCaseType === 'planta_2_step') && (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-300">Setpoint OD (mg/L):</label>
+                  <input
+                    type="number" step="0.1" min="0" max="14"
+                    value={expSetpoint}
+                    disabled={expCaseType !== 'closed_loop'}
+                    onChange={(e) => setExpSetpoint(Number(e.target.value))}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-cyan-300 font-mono focus:outline-none focus:border-cyan-500 disabled:opacity-40"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-300">Escalón (% throttle):</label>
+                  <input
+                    type="number" step="5" min="0" max="100"
+                    value={expStepThrottle}
+                    disabled={expCaseType !== 'planta_2_step'}
+                    onChange={(e) => setExpStepThrottle(Number(e.target.value))}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-cyan-300 font-mono focus:outline-none focus:border-cyan-500 disabled:opacity-40"
+                  />
+                </div>
+              </div>
+            )}
+
             {/* Target Planta */}
             <div className="space-y-1">
               <label className="text-xs font-semibold text-slate-300">Planta / Sistema Objetivo:</label>
