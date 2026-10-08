@@ -7,6 +7,27 @@ export const revalidate = 0;
 export const fetchCache = 'force-no-store';
 
 /**
+ * Normaliza el payload de una orden de `control_commands`.
+ * En la BD de producción no existe la columna `payload`: el JSON viaja serializado en
+ * `error_message`. Sin esta reconstrucción cualquier lectura de `row.payload` es `undefined`,
+ * lo que ya causó una mala clasificación de órdenes entre nodos.
+ */
+function resolveCommandPayload(row: any): Record<string, any> {
+  let payload = row?.payload;
+  if (!payload || typeof payload !== 'object' || Object.keys(payload).length === 0) {
+    const raw = row?.error_message;
+    if (typeof raw === 'string' && raw.trim().startsWith('{')) {
+      try {
+        payload = JSON.parse(raw);
+      } catch {
+        payload = null;
+      }
+    }
+  }
+  return payload && typeof payload === 'object' ? payload : {};
+}
+
+/**
  * Permite que cualquier dispositivo ESP32 autenticado (motor_thruster o sensor_do)
  * consulte comandos de control pendientes (polling HTTP/HTTPS)
  */
@@ -32,21 +53,33 @@ export async function GET(req: NextRequest) {
       .order('created_at', { ascending: false })
       .limit(1);
 
-    // 2. Si no encontro con device_id exacto, buscar comando pendiente global correspondiente
+    // 2. Fallback: SOLO órdenes globales (sin device_id).
+    // Antes este bloque tomaba la orden pendiente más reciente de CUALQUIER dispositivo y, como
+    // `candidate.payload` no existe en la BD de producción (el payload viaja serializado en
+    // error_message), `isSensorCmd` se reducía a ['start','stop']. Para las órdenes del
+    // orquestador (`command_type='set_speed'`) eso es false, así que el filtro terminaba siendo
+    // cierto para cualquier nodo `motor_thruster`. El mixer y el ODrive son ambos motor_thruster:
+    // el que hiciera polling primero se robaba la orden `set_mode` del otro y la marcaba como
+    // 'sent', dejando al ODrive sin armar nunca.
     if (!commands || commands.length === 0) {
       const fallbackQuery = await supabaseAdmin
         .from('control_commands')
         .select('*')
+        .is('device_id', null)
         .eq('status', 'pending')
-        .order('created_at', { ascending: false })
+        .order('created_at', { ascending: true })
         .limit(1);
 
       if (fallbackQuery.data && fallbackQuery.data.length > 0) {
         const candidate = fallbackQuery.data[0];
-        const isSensorCmd = candidate.payload?.action?.includes('monitor') || 
-                            candidate.payload?.action?.includes('experiment') ||
-                            candidate.payload?.action?.includes('sample') ||
-                            ['start', 'stop'].includes(candidate.command_type);
+        const candidatePayload = resolveCommandPayload(candidate);
+        const candidateAction = String(candidatePayload?.action || '');
+        const isSensorCmd =
+          candidateAction.includes('monitor') ||
+          candidateAction.includes('experiment') ||
+          candidateAction.includes('sample') ||
+          ['start', 'stop'].includes(candidate.command_type);
+
         if ((device.type === 'sensor_do' && isSensorCmd) || (device.type === 'motor_thruster' && !isSensorCmd)) {
           commands = [candidate];
         }
@@ -68,17 +101,9 @@ export async function GET(req: NextRequest) {
     const command = commands[0];
 
     // Normalizar payload para que firmware reciba action e interval_sec claros
-    let payload = command.payload;
-    // Si no vino en columna payload, revisar si fue serializado en error_message
-    if (!payload || typeof payload !== 'object' || Object.keys(payload).length === 0) {
-      if (command.error_message && typeof command.error_message === 'string' && command.error_message.trim().startsWith('{')) {
-        try {
-          payload = JSON.parse(command.error_message);
-        } catch {}
-      }
-    }
+    let payload: Record<string, any> = resolveCommandPayload(command);
 
-    if (!payload || typeof payload !== 'object' || Object.keys(payload).length === 0) {
+    if (Object.keys(payload).length === 0) {
       let action = command.command_type;
       const reqBy = command.requested_by || '';
       const match = reqBy.match(/\(([^)]+)\)/);
