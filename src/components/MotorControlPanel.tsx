@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Power, Send, Gauge, AlertCircle, CheckCircle2, ShieldAlert, Cpu, Sliders, Zap, OctagonAlert } from 'lucide-react';
+import { Power, Send, Gauge, AlertCircle, CheckCircle2, ShieldAlert, Cpu, Sliders, Zap, OctagonAlert, RotateCcw } from 'lucide-react';
 import { Device, MotorTelemetry } from '@/types';
 
 interface MotorControlPanelProps {
@@ -78,6 +78,48 @@ export const MotorControlPanel: React.FC<MotorControlPanelProps> = ({
       setFeedback({
         type: 'error',
         message: '¡PARADA DE EMERGENCIA ENVIADA! El motor ha sido desarmado a 0 RPM.'
+      });
+      onCommandSent();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Error de conexión' });
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  /**
+   * Reanudar tras una parada de emergencia.
+   *
+   * El E-Stop del firmware es un latch: `_emergencyStopActive` deja a `computeOutputRpm()` en 0
+   * para siempre y `configure()` (usado por `set_mode`) NO lo limpia. Hasta ahora
+   * `ControlEngine::clearEmergencyStop()` no se invocaba desde ningún sitio y la web no tenía
+   * botón, así que un ODrive que hubiera latcheado un E-Stop nunca volvía a moverse.
+   */
+  const handleResumeFromEstop = async () => {
+    if (!isDeviceOnline) return;
+    setIsSending(true);
+    setFeedback({ type: null, message: '' });
+
+    try {
+      const res = await fetch('/api/commands', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          device_id: motorDevice?.id,
+          // `set_speed` es el único tipo admitido por el CHECK de `control_commands`;
+          // la intención real viaja en payload.action.
+          command_type: 'set_speed',
+          speed_percent: 0,
+          payload: { action: 'clear_estop' },
+          requested_by: 'Reanudar tras E-Stop (Web)'
+        })
+      });
+
+      if (!res.ok) throw new Error('Error al reanudar el controlador');
+
+      setFeedback({
+        type: 'success',
+        message: 'E-Stop liberado. El motor aceptará consignas de nuevo.'
       });
       onCommandSent();
     } catch (err: any) {
@@ -193,7 +235,7 @@ export const MotorControlPanel: React.FC<MotorControlPanelProps> = ({
           </div>
         </div>
 
-        {/* Emergency Stop & Status */}
+        {/* Emergency Stop, Resume & Status */}
         <div className="flex items-center gap-2">
           <button
             onClick={handleEmergencyStop}
@@ -202,6 +244,15 @@ export const MotorControlPanel: React.FC<MotorControlPanelProps> = ({
           >
             <OctagonAlert className="w-4 h-4 text-white animate-pulse" />
             <span>PARADA DE EMERGENCIA</span>
+          </button>
+          <button
+            onClick={handleResumeFromEstop}
+            disabled={!isDeviceOnline || isSending}
+            title="Libera el latch de emergencia del ODrive para volver a aceptar consignas"
+            className="flex items-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-emerald-300 font-bold text-xs rounded-xl border border-emerald-800/60 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RotateCcw className="w-4 h-4" />
+            <span>REANUDAR</span>
           </button>
         </div>
       </div>

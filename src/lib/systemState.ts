@@ -1,5 +1,6 @@
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { OrchestratorState, SystemState, OverrideFlags, CommandStatus } from '@/types';
+import { resolveActuatorRecipe, buildActuatorIntent } from '@/lib/experimentRecipe';
 
 /** Clave canónica en system_settings para el estado global del orquestador (AquaControl V4). */
 export const ORCHESTRATOR_KEY = 'system_state';
@@ -141,11 +142,49 @@ export async function enqueueCommand(input: EnqueueCommandInput): Promise<{ id: 
   return { id: res.data.id, status: res.data.status };
 }
 
-/** Difunde un `set_state` a todos los nodos del banco. Devuelve cuántas órdenes se encolaron. */
+/** Lee el experimento del registro canónico (`system_settings.experiments_registry`). */
+export async function getRegisteredExperiment(experimentId: string | null): Promise<any | null> {
+  if (!experimentId || !isSupabaseConfigured()) return null;
+  try {
+    const { data } = await supabaseAdmin
+      .from('system_settings')
+      .select('value')
+      .eq('key', 'experiments_registry')
+      .maybeSingle();
+    const list = Array.isArray(data?.value) ? data.value : [];
+    return list.find((e: any) => e?.id === experimentId) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Difunde un `set_state` a todos los nodos del banco. Devuelve cuántas órdenes se encolaron.
+ *
+ * El payload incluye la intención EXPLÍCITA de cada actuador, resuelta desde el registro de
+ * experimentos. Sin ella cada nodo adivinaba: el T-200 encendía el mixer en todo
+ * `ACTIVE_EXPERIMENT` y el ODrive no se armaba nunca. En IDLE / MANUAL_OVERRIDE la receta se
+ * fuerza a OFF porque una anulación manual debe abortar cualquier automatismo (ADD §2.3).
+ */
 export async function broadcastState(state: SystemState, requested_by: string): Promise<number> {
+  const experiment = await getRegisteredExperiment(state.experiment_id);
+  const intent = buildActuatorIntent(state.state, resolveActuatorRecipe(experiment));
+
   let queued = 0;
   for (const device_id of ALL_DEVICE_IDS) {
     const isSensor = device_id === DEVICE_IDS.sensor;
+
+    // La intención se envía solo al nodo que la ejecuta, para no dejar ambigüedad entre nodos.
+    const roleIntent: Record<string, string | number> = {};
+    if (device_id === DEVICE_IDS.mixer) {
+      roleIntent.mixer = intent.mixer as string;
+    }
+    if (device_id === DEVICE_IDS.odrive) {
+      roleIntent.motor_mode = intent.motor_mode as string;
+      if (intent.motor_target_do !== undefined) roleIntent.motor_target_do = intent.motor_target_do;
+      if (intent.motor_throttle_pct !== undefined) roleIntent.motor_throttle_pct = intent.motor_throttle_pct;
+    }
+
     const cmd = await enqueueCommand({
       device_id,
       // `set_speed` es el tipo permitido por el CHECK de producción para actuadores;
@@ -156,7 +195,8 @@ export async function broadcastState(state: SystemState, requested_by: string): 
         state: state.state,
         experiment_id: state.experiment_id,
         override: state.override,
-        interval_sec: 5
+        interval_sec: 5,
+        ...roleIntent
       },
       requested_by
     });

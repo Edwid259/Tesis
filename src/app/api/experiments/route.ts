@@ -3,6 +3,7 @@ import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { demoExperiments } from '@/lib/demoData';
 import { Experiment } from '@/types';
 import { enqueueCommand, setSystemState, DEVICE_IDS } from '@/lib/systemState';
+import { resolveActuatorRecipe } from '@/lib/experimentRecipe';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -181,22 +182,26 @@ export async function POST(req: NextRequest) {
         updated_by: `Experimento (${case_type})`
       });
 
-      const plant = String(plant_target || 'both');
-      const wantsMixer = plant === 'planta_1' || plant === 'both';
-      const wantsOdrive = plant === 'planta_2' || plant === 'both' || case_type === 'closed_loop';
+      // Receta canónica desde el registro (misma función que usa el orquestador al difundir el
+      // estado). Antes esta lógica estaba duplicada aquí y el broadcast no la aplicaba, que es
+      // exactamente lo que hacía que el mixer quedara encendido y el ODrive sin armar.
+      const recipe = resolveActuatorRecipe(newExperiment);
 
-      if (wantsMixer) {
-        const ok = await enqueueCommand({
-          device_id: DEVICE_IDS.mixer,
-          command_type: 'set_speed',
-          payload: { action: 'start_mixer', experiment_id: newExperiment.id },
-          requested_by: 'Orquestador (mixer ON)'
-        });
-        if (ok) armed.push('mixer');
-      }
+      // Mixer: intención explícita. ON solo en Planta 1 (disolver el Na2SO3); OFF en los casos
+      // de aireación, donde la agitación contaminaría la identificación de KLa.
+      const mixerOk = await enqueueCommand({
+        device_id: DEVICE_IDS.mixer,
+        command_type: 'set_speed',
+        payload: {
+          action: recipe.mixer === 'on' ? 'start_mixer' : 'stop_mixer',
+          experiment_id: newExperiment.id
+        },
+        requested_by: `Orquestador (mixer ${recipe.mixer.toUpperCase()})`
+      });
+      if (mixerOk) armed.push(recipe.mixer === 'on' ? 'mixer' : 'mixer_off');
 
-      if (wantsOdrive) {
-        const usePid = controller_type === 'pid' || case_type === 'closed_loop';
+      // ODrive: armar según la receta (manual con escalón de RPM, o PID con setpoint de OD).
+      if (recipe.motor.mode !== 'off') {
         const ok = await enqueueCommand({
           device_id: DEVICE_IDS.odrive,
           // `set_speed` es el tipo permitido por el CHECK de producción; la intención real
@@ -204,11 +209,11 @@ export async function POST(req: NextRequest) {
           command_type: 'set_speed',
           payload: {
             action: 'set_mode',
-            mode: usePid ? 'pid' : 'manual',
+            mode: recipe.motor.mode,
             experiment_id: newExperiment.id,
-            ...(usePid && newExperiment.setpoint_do !== null
-              ? { target_do: newExperiment.setpoint_do }
-              : { manual_throttle_pct: Number(parameters?.step_throttle_pct ?? 50) })
+            ...(recipe.motor.mode === 'pid'
+              ? { target_do: recipe.motor.target_do }
+              : { manual_throttle_pct: recipe.motor.throttle_pct })
           },
           requested_by: 'Orquestador (ODrive arm)'
         });
