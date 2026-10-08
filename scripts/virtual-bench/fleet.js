@@ -18,6 +18,7 @@ const { ControlEngine, MODE_PID, MODE_MANUAL } = require('./models/controlEngine
 const { OdLogger } = require('./models/odLogger');
 const { MasterClock, ExtrapolatedClock } = require('./models/masterClock');
 const { EspNowLink } = require('./models/espnow');
+const { ProcessModel } = require('./models/process');
 const { odrive: ODRIVE_C } = require('./models/constants');
 
 const nowMs = () => Date.now();
@@ -155,6 +156,8 @@ class SensorNode extends BaseNode {
     this.sampleIntervalMs = CADENCE.sensorSampleMs;
     this.espNowSeq = 0;
     this.lastMeasurement = null;
+    /** Planta compartida: si existe, el sensor la muestrea; si no, se usa `setTrueDo` manual. */
+    this.process = opts.process || null;
   }
 
   start() {
@@ -166,17 +169,29 @@ class SensorNode extends BaseNode {
 
   rtcForAck() { return this.clock.rtcTimestampMs(nowMs(), nowMs() % 1000); }
 
-  /** Verdad de la planta (la fija el escenario). */
-  setTrueDo(mgL) { this.sensor.setTrueDo(mgL); }
+  /** Verdad de la planta. Si hay modelo de proceso, éste manda; si no, se fija a mano. */
+  setTrueDo(mgL) {
+    if (this.process) { this.process.doMgL = Number(mgL); return; }
+    this.sensor.setTrueDo(mgL);
+  }
   setFault(f) { this.sensor.setFault(f); }
+
+  /** Lee la planta (o el valor fijo) y lo entrega al sensor como "verdad" a muestrear. */
+  syncFromProcess() {
+    if (!this.process) return;
+    this.sensor.setTrueDo(this.process.doMgL);
+    this.sensor.setTrueTemp(this.process.tempC);
+  }
 
   sampleAndPublish() {
     if (this.stopped || this.systemState !== 'ACTIVE_EXPERIMENT') return;
+    this.syncFromProcess();
     this.measureOnce();
   }
 
   idleHeartbeat() {
     if (this.stopped || this.systemState === 'ACTIVE_EXPERIMENT') return;
+    this.syncFromProcess();
     this.measureOnce();
     this.flush();
   }
@@ -250,6 +265,8 @@ class ODriveNode extends BaseNode {
     this.targetRpm = 0;
     this.rejectedSamples = 0;
     this.acceptedSamples = 0;
+    /** Planta compartida: el aireador le comunica las RPM que realmente gira. */
+    this.process = opts.process || null;
   }
 
   start() {
@@ -289,6 +306,7 @@ class ODriveNode extends BaseNode {
       this.targetRpm = 0;
       this.virtual.setVelocityRpm(0);
       this.virtual.enterIdle();
+      if (this.process) this.process.setAeratorRpm(0);
       return;
     }
 
@@ -300,13 +318,16 @@ class ODriveNode extends BaseNode {
     }
     this.targetRpm = this.engine.computeOutputRpm(now);
     this.virtual.setVelocityRpm(this.targetRpm);
+
+    // El aireador comunica a la planta las RPM que realmente está girando (no la consigna).
+    if (this.process) this.process.setAeratorRpm(this.virtual.state.actualRpm);
   }
 
   sampleTelemetry() {
     if (this.stopped || !this.telemetry) return;
     const t = this.telemetry;
     const speedPercent = Math.min(100, Math.max(0, (t.actual_rpm / ODRIVE_C.MAX_MOTOR_RPM) * 100));
-    this.buffer.push({
+    this.lastSample = {
       is_on: t.actual_rpm > 0.5,
       speed_percent: Math.round(speedPercent * 10) / 10,
       pwm_us: Math.round(t.actual_rpm),
@@ -319,7 +340,8 @@ class ODriveNode extends BaseNode {
       iq_a: Math.round(t.ibus_current * 10000) / 10000,
       status_code: t.axis_error,
       rtc_timestamp_ms: this.clock.currentRtcMs(nowMs())
-    });
+    };
+    this.buffer.push(this.lastSample);
     if (this.buffer.length >= 25) this.flush();
   }
 
@@ -413,6 +435,8 @@ class MixerNode extends BaseNode {
     this.integral = 0;
     this.duty = 0;
     this.mixerEvents = [];
+    /** Planta compartida: la agitación mejora la transferencia de oxígeno. */
+    this.process = opts.process || null;
   }
 
   start() {
@@ -441,6 +465,7 @@ class MixerNode extends BaseNode {
 
   async setMixer(on) {
     this.targetRpm = on ? MIXER_DEFAULT_RPM : 0;
+    if (this.process) this.process.setMixer(on);
     const res = await this.api.devicePost('/api/events/mixer', this.device.key, {
       experiment_id: this.experimentId || 'idle',
       event_type: on ? 'start_mixer' : 'stop_mixer',
@@ -495,7 +520,13 @@ class MixerNode extends BaseNode {
 /* ============================= Nodo PUMP ============================== */
 
 /** Bomba peristáltica: dosificación volumétrica con encoder AS5600 y timeout anti-sobredosificación. */
-const PUMP = { ML_PER_REV: 1.0, DOSE_TIMEOUT_MS: 60000, MIN_DUTY: 30 };
+const PUMP = {
+  ML_PER_REV: 1.0,
+  DOSE_TIMEOUT_MS: 60000,
+  MIN_DUTY: 30,
+  /** Concentración de la disolución madre de Na2SO3 (regla 11: 100 g/L). */
+  STOCK_G_PER_L: 100
+};
 
 class PumpNode extends BaseNode {
   constructor(opts) {
@@ -507,6 +538,8 @@ class PumpNode extends BaseNode {
     this.doseStartedAt = 0;
     this.pumpEvents = [];
     this.buffer = [];
+    /** Planta compartida: la dosis inyectada consume oxígeno. */
+    this.process = opts.process || null;
   }
 
   start() {
@@ -515,7 +548,10 @@ class PumpNode extends BaseNode {
     this.timers.push(setInterval(() => this.flush(), 5000));
   }
 
-  /** Lazo de dosificación: integra revoluciones del encoder y corta al alcanzar el objetivo. */
+  /**
+   * Lazo de dosificación: integra revoluciones del encoder y corta al alcanzar el objetivo.
+   * La masa inyectada se entrega a la planta por estequiometría real (Na2SO3 + ½O2).
+   */
   dosingLoop() {
     if (this.stopped) return;
     if (!this.dosing) { this.duty = 0; return; }
@@ -527,7 +563,9 @@ class PumpNode extends BaseNode {
 
     // A 100% de duty la bomba gira ~2 rev/s
     const revs = (this.duty / 100) * 2 * 0.05;
-    this.dosedMl += revs * PUMP.ML_PER_REV;
+    const deltaMl = revs * PUMP.ML_PER_REV;
+    this.dosedMl += deltaMl;
+    if (this.process && deltaMl > 0) this.process.injectSulfite(deltaMl, PUMP.STOCK_G_PER_L);
 
     if (this.targetMl > 0 && this.dosedMl >= this.targetMl) {
       this.finishDose('completed');
@@ -602,8 +640,15 @@ class PumpNode extends BaseNode {
 /* =============================== Flota =============================== */
 
 /**
- * Construye la flota y el enlace ESP-NOW que une boya y controlador.
- * El canal se comparte con el AP: si se desalinea, todos los paquetes se pierden (igual que en banco).
+ * Construye la flota, la planta y el enlace ESP-NOW que une boya y controlador.
+ *
+ * La PLANTA (`models/process.js`) es opcional: cierra el ciclo observable del sistema (aireador
+ * sube el OD, sulfito lo baja) para poder comprobar que todo trabaja coordinado. Sus parámetros de
+ * transferencia son INVENTADOS y su salida no es evidencia experimental (ver la advertencia del
+ * propio módulo). Si no se pasa `process`, los escenarios fijan el OD a mano con `setTrueDo`.
+ *
+ * El canal de ESP-NOW se comparte con el AP: si se desalinea, todos los paquetes se pierden
+ * (igual que en banco).
  */
 function buildFleet(api, verbose, options = {}) {
   const link = new EspNowLink({
@@ -613,10 +658,14 @@ function buildFleet(api, verbose, options = {}) {
     verbose
   });
 
-  const sensor = new SensorNode({ role: 'sensor', api, verbose, link, ...options });
-  const odrive = new ODriveNode({ role: 'odrive', api, verbose, ...options });
-  const mixer = new MixerNode({ role: 'mixer', api, verbose });
-  const pump = new PumpNode({ role: 'pump', api, verbose });
+  // Planta compartida por los 4 nodos (opcional).
+  const process = options.process || null;
+  const shared = { ...options, link, process };
+
+  const sensor = new SensorNode({ role: 'sensor', api, verbose, ...shared });
+  const odrive = new ODriveNode({ role: 'odrive', api, verbose, ...shared });
+  const mixer = new MixerNode({ role: 'mixer', api, verbose, ...shared });
+  const pump = new PumpNode({ role: 'pump', api, verbose, ...shared });
 
   link.registerReceiver({
     channel: link.channel,
@@ -624,10 +673,10 @@ function buildFleet(api, verbose, options = {}) {
     onRejected: () => odrive.onEspNowRejected()
   });
 
-  return { fleet: { sensor, odrive, mixer, pump }, link };
+  return { fleet: { sensor, odrive, mixer, pump }, link, process };
 }
 
 module.exports = {
   buildFleet, BaseNode, SensorNode, ODriveNode, MixerNode, PumpNode,
-  ROLE_ACTIONS, BLDC_MAX_RPM, MIXER_DEFAULT_RPM
+  ROLE_ACTIONS, BLDC_MAX_RPM, MIXER_DEFAULT_RPM, PUMP
 };

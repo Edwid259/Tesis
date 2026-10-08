@@ -101,7 +101,9 @@ function parseArgs(argv) {
     keepData: false,
     force: false,
     verbose: false,
-    settleMs: 9000
+    settleMs: 9000,
+    timeAcceleration: Number(process.env.BENCH_TIME_SCALE || 1),
+    initialDoMgL: undefined
   };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
@@ -109,6 +111,8 @@ function parseArgs(argv) {
     else if (a === '--target') args.target = argv[++i];
     else if (a === '--base-url') args.baseUrl = argv[++i];
     else if (a === '--settle-ms') args.settleMs = Number(argv[++i]);
+    else if (a === '--time-scale') args.timeAcceleration = Number(argv[++i]);
+    else if (a === '--initial-do') args.initialDoMgL = Number(argv[++i]);
     else if (a === '--dry-run') args.dryRun = true;
     else if (a === '--keep-data') args.keepData = true;
     else if (a === '--force') args.force = true;

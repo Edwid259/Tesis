@@ -90,33 +90,26 @@ export async function authenticateDevice(
     }
 
     // Si Supabase está enlazado en producción, sincronizar dispositivo (upsert transparente)
-    // Esto garantiza que el device_id exista para claves foráneas sin requerir SQL manual
+    // Esto garantiza que el device_id exista para claves foráneas sin requerir SQL manual.
+    // El ROL se persiste también en metadata: `resolveDeviceRole()` lo usa como respaldo si el
+    // `devices.type` no se pudo migrar, y este upsert es quien lo sobrescribe en cada arranque.
     if (isSupabaseConfigured()) {
+      const metadataWithRole = { ...knownDevice.metadata, role: knownDevice.role };
       try {
-        // Se sincroniza con el tipo LEGACY mientras la migración no esté aplicada: escribir
-        // `aerator_motor` con la restricción CHECK antigua haría fallar el upsert.
-        await supabaseAdmin.from('devices').upsert({
+        const upsert = (type: string) => supabaseAdmin.from('devices').upsert({
           id: knownDevice.id,
           name: knownDevice.name,
-          type: knownDevice.type,
+          type,
           api_key_hash: hashApiKey(deviceKey),
           location: knownDevice.location,
           status: 'online',
           last_seen_at: new Date().toISOString(),
-          metadata: knownDevice.metadata
-        }, { onConflict: 'id' }).then(undefined, async () => {
-          // Reintento con el tipo legacy admitido por el CHECK de producción actual.
-          await supabaseAdmin.from('devices').upsert({
-            id: knownDevice.id,
-            name: knownDevice.name,
-            type: 'motor_thruster',
-            api_key_hash: hashApiKey(deviceKey),
-            location: knownDevice.location,
-            status: 'online',
-            last_seen_at: new Date().toISOString(),
-            metadata: { ...knownDevice.metadata, role: knownDevice.role }
-          }, { onConflict: 'id' });
-        });
+          metadata: metadataWithRole
+        }, { onConflict: 'id' });
+
+        const first = await upsert(knownDevice.type);
+        // Reintento con el tipo legacy si el CHECK de producción aún no admite los tipos por rol.
+        if (first.error) await upsert('motor_thruster');
       } catch (upsertErr) {
         console.warn('Advertencia al sincronizar dispositivo en Supabase:', upsertErr);
       }
