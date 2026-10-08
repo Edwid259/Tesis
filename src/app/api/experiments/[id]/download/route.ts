@@ -53,23 +53,76 @@ export async function GET(
       }
 
       if (experiment.started_at) {
-        let query = supabaseAdmin
-          .from('sensor_readings')
-          .select('*')
-          .gte('recorded_at', experiment.started_at);
+        // Fetch bulk data
+        const { data: sensorBulk } = await supabaseAdmin
+          .from('sensor_telemetry_bulk')
+          .select('payload_json')
+          .eq('experiment_id', id);
 
-        if (experiment.ended_at) {
-          query = query.lte('recorded_at', experiment.ended_at);
+        const { data: motorBulk } = await supabaseAdmin
+          .from('odrive_telemetry_bulk')
+          .select('payload_json')
+          .eq('experiment_id', id);
+
+        // Flatten payload_json arrays
+        const flatSensor = (sensorBulk || []).flatMap((row: any) => row.payload_json || []);
+        const flatMotor = (motorBulk || []).flatMap((row: any) => row.payload_json || []);
+
+        // Align by time. If motor has exact ms, we can join. But sensor is at 0.2 Hz (every 5000ms), 
+        // Motor is at 5 Hz (every 200ms).
+        // Let's create an interpolated/aligned timeline based on rtc_timestamp_ms
+        const timeMap = new Map<number, any>();
+
+        // Insert motor data (higher frequency)
+        for (const m of flatMotor) {
+          const t = m.rtc_timestamp_ms;
+          if (t && t > 0) {
+            timeMap.set(t, { motor: m, sensor: null });
+          }
         }
 
-        const { data: rows, error: readError } = await query
-          .order('recorded_at', { ascending: true })
-          .limit(10000);
-
-        if (readError) {
-          console.error('Error consultando lecturas de sensor para CSV:', readError);
+        // Insert sensor data
+        for (const s of flatSensor) {
+          // Sensor might not have exact rtc_timestamp_ms if not fully synced, 
+          // or we can use seconds_since_2000
+          // Let's assume sensor JSON has rtc_timestamp_ms or we fall back to seconds_since_2000 * 1000
+          let t = s.rtc_timestamp_ms;
+          if (!t) {
+            if (s.seconds_since_2000) {
+               // Approximate
+               t = s.seconds_since_2000 * 1000;
+            } else {
+               t = new Date(s.datetime).getTime();
+            }
+          }
+          
+          if (!timeMap.has(t)) {
+            timeMap.set(t, { motor: null, sensor: s });
+          } else {
+            const entry = timeMap.get(t);
+            entry.sensor = s;
+          }
         }
-        readings = rows || [];
+
+        // Sort by timestamp
+        const sortedKeys = Array.from(timeMap.keys()).sort((a, b) => a - b);
+        
+        // Forward-fill sensor data (since it's lower frequency)
+        let lastSensor: any = null;
+        for (const k of sortedKeys) {
+          const entry = timeMap.get(k);
+          if (entry.sensor) {
+            lastSensor = entry.sensor;
+          } else {
+            entry.sensor = lastSensor;
+          }
+          
+          readings.push({
+            rtc_timestamp_ms: k,
+            ...entry.sensor,
+            ...entry.motor
+          });
+        }
       }
     } else {
       // Modo Demo Local
@@ -103,19 +156,21 @@ export async function GET(
 
     // 2. Construir encabezados y contenido CSV
     const csvLines: string[] = [
-      'Fecha_Hora_GMT, Segundos_2000, OD_mg_L, Saturacion_pct, Temp_Agua_C, Bateria_V, Status'
+      'RTC_ms, OD_mg_L, Saturacion_pct, Temp_Agua_C, Motor_RPM, Motor_Target_RPM, Corriente_A, Voltaje_V'
     ];
 
     readings.forEach((r) => {
-      const dt = r.recorded_at ? new Date(r.recorded_at).toISOString() : '';
-      const s2000 = r.seconds_since_2000 ?? '';
-      const od = r.dissolved_oxygen_mg_l !== undefined ? Number(r.dissolved_oxygen_mg_l).toFixed(3) : '';
-      const sat = r.oxygen_saturation_pct !== undefined ? Number(r.oxygen_saturation_pct).toFixed(2) : '';
-      const temp = r.water_temperature_c !== undefined ? Number(r.water_temperature_c).toFixed(2) : '';
-      const bat = r.battery_v !== undefined ? Number(r.battery_v).toFixed(2) : '';
-      const status = r.status ?? 0;
+      const rtc = r.rtc_timestamp_ms || '';
+      const od = r.do_milli_mg_l !== undefined ? Number(r.do_milli_mg_l / 1000.0).toFixed(3) : '';
+      const sat = r.do_sat_deci_pct !== undefined ? Number(r.do_sat_deci_pct / 10.0).toFixed(2) : '';
+      const temp = r.water_temp_centi !== undefined ? Number(r.water_temp_centi / 100.0).toFixed(2) : '';
+      
+      const motorAct = r.actual_rpm !== undefined ? Number(r.actual_rpm).toFixed(2) : '';
+      const motorTgt = r.target_rpm !== undefined ? Number(r.target_rpm).toFixed(2) : '';
+      const current = r.current_a !== undefined ? Number(r.current_a).toFixed(2) : '';
+      const voltage = r.voltage_v !== undefined ? Number(r.voltage_v).toFixed(2) : '';
 
-      csvLines.push(`${dt}, ${s2000}, ${od}, ${sat}, ${temp}, ${bat}, ${status}`);
+      csvLines.push(`${rtc}, ${od}, ${sat}, ${temp}, ${motorAct}, ${motorTgt}, ${current}, ${voltage}`);
     });
 
     const csvContent = csvLines.join('\r\n');

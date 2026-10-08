@@ -126,6 +126,8 @@ export interface Experiment {
   sampling_rate_sec: number;
   csv_filename: string;
   status: 'active' | 'completed' | 'stopped';
+  mode?: 'manual' | 'pid' | 'fuzzy';
+  plant_target?: 'planta_1' | 'planta_2' | 'both';
   started_at: string;
   ended_at?: string | null;
   total_samples: number;

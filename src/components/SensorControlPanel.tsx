@@ -80,6 +80,8 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
   const [expRate, setExpRate] = useState<number>(2);
   const [expFilename, setExpFilename] = useState<string>('EXP_01.CSV');
   const [expDesc, setExpDesc] = useState<string>('Evaluación de transferencia de O2 y dinámica de saturación.');
+  const [expMode, setExpMode] = useState<'manual' | 'pid' | 'fuzzy'>('manual');
+  const [expPlantTarget, setExpPlantTarget] = useState<'planta_1' | 'planta_2' | 'both'>('both');
 
   // Cronómetro en tiempo real para experimento activo
   const [elapsedSec, setElapsedSec] = useState<number>(0);
@@ -310,7 +312,9 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
           name: expName.trim(),
           sampling_rate_sec: expRate,
           csv_filename: expFilename,
-          description: expDesc
+          description: expDesc,
+          mode: expMode,
+          plant_target: expPlantTarget
         })
       });
 
@@ -397,6 +401,28 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
       onCommandSent();
     } catch (err: any) {
       showFeedback('error', err.message || 'Error eliminando experimento');
+    }
+  };
+
+  const handleManualConfirmation = async () => {
+    if (!activeExperiment) return;
+    setIsSending(true);
+    try {
+      const res = await fetch('/api/events/mixer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          experiment_id: activeExperiment.id,
+          event_type: 'manual_confirmation',
+          rtc_timestamp_ms: Date.now()
+        })
+      });
+      if (!res.ok) throw new Error('Error al registrar confirmación');
+      showFeedback('success', 'Confirmación de inyección química registrada exitosamente.');
+    } catch (err: any) {
+      showFeedback('error', err.message || 'Error registrando confirmación');
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -526,7 +552,17 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
               title="Descargar CSV con las muestras tomadas hasta este momento"
             >
               <Download className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Descargar CSV</span>
+              <span>CSV</span>
+            </button>
+
+            <button
+              onClick={handleManualConfirmation}
+              disabled={isSending}
+              className="px-3.5 py-2 rounded-xl text-xs font-semibold text-amber-950 bg-amber-400 hover:bg-amber-300 transition-all flex items-center gap-1.5 shadow-sm"
+              title="Confirmar que se ha vertido la solución química"
+            >
+              <FlaskConical className="w-3.5 h-3.5" />
+              <span>Marcar Inyección</span>
             </button>
 
             <button
@@ -582,6 +618,40 @@ export const SensorControlPanel: React.FC<SensorControlPanelProps> = ({
                 className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-cyan-300 font-mono focus:outline-none focus:border-cyan-500"
                 placeholder="EXP_01.CSV"
               />
+            </div>
+            
+            {/* Target Planta */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-slate-300">Planta / Sistema Objetivo:</label>
+              <select
+                value={expPlantTarget}
+                onChange={(e) => setExpPlantTarget(e.target.value as any)}
+                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-cyan-500"
+              >
+                <option value="planta_1">Planta 1 (Bomba Dosificadora)</option>
+                <option value="planta_2">Planta 2 (Aireador ODrive)</option>
+                <option value="both">Ambas Plantas / Lazo Cerrado</option>
+              </select>
+            </div>
+
+            {/* Modalidad */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-slate-300">Modo de Operación:</label>
+              <div className="flex bg-slate-900 rounded-xl border border-slate-700 p-1">
+                <button
+                  onClick={() => setExpMode('manual')}
+                  className={`flex-1 py-1 text-[11px] font-bold rounded-lg transition-colors ${expMode === 'manual' ? 'bg-cyan-500 text-cyan-950' : 'text-slate-400 hover:text-white'}`}
+                >
+                  Manual
+                </button>
+                <button
+                  onClick={() => setExpMode('pid')}
+                  disabled={expPlantTarget === 'planta_1'}
+                  className={`flex-1 py-1 text-[11px] font-bold rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${expMode === 'pid' ? 'bg-cyan-500 text-cyan-950' : 'text-slate-400 hover:text-white'}`}
+                >
+                  PID Auto
+                </button>
+              </div>
             </div>
           </div>
 

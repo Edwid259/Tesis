@@ -111,6 +111,32 @@ CREATE TABLE IF NOT EXISTS public.control_commands (
     error_message TEXT
 );
 
+-- 7. TABLA: sensor_telemetry_bulk (Telemetría OD a 0.2Hz en lotes)
+CREATE TABLE IF NOT EXISTS public.sensor_telemetry_bulk (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    experiment_id VARCHAR(50) NOT NULL,
+    payload_json JSONB NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 8. TABLA: odrive_telemetry_bulk (Telemetría ODrive a 5Hz en lotes)
+CREATE TABLE IF NOT EXISTS public.odrive_telemetry_bulk (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    experiment_id VARCHAR(50) NOT NULL,
+    payload_json JSONB NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 9. TABLA: mixer_events (Log de inyecciones / activaciones de T-200 / Bomba)
+CREATE TABLE IF NOT EXISTS public.mixer_events (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    experiment_id VARCHAR(50) NOT NULL,
+    event_type VARCHAR(50) NOT NULL CHECK (event_type IN ('start_mixer', 'stop_mixer', 'dose_pump', 'manual_confirmation')),
+    status VARCHAR(50),
+    rtc_timestamp_ms BIGINT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- 7. TABLA: system_settings (Configuración general de umbrales y factores de escala)
 CREATE TABLE IF NOT EXISTS public.system_settings (
     key VARCHAR(50) PRIMARY KEY,
@@ -138,7 +164,8 @@ VALUES
     ('do_thresholds', '{"critical": 4.0, "warning": 6.0, "optimal": 7.5, "unit": "mg/L"}'::jsonb, 'Umbrales de calidad para Oxígeno Disuelto'),
     ('sensor_scale_factors', '{"do_divider": 1000.0, "temp_divider": 100.0, "sat_divider": 10.0, "battery_divider": 1000.0}'::jsonb, 'Factores de normalización de datos crudos ESP32'),
     ('thruster_pwm_calibration', '{"min_pwm": 1100, "neutral_pwm": 1500, "max_pwm": 1900}'::jsonb, 'Calibración de microsegundos PWM para Blue Robotics T200 (ESC Basic / ESC500)'),
-    ('aeration_control_config', '{"control_mode": "pid", "target_do_mg_l": 7.5, "pid_gains": {"kp": 100.0, "ki": 1.5, "kd": 10.0}, "fuzzy_profile": "standard_pond", "min_rpm": 0, "max_rpm": 3200, "failsafe_rpm": 500, "manual_throttle_pct": 0.0, "sampling_interval_ms": 2000, "telemetry_interval_ms": 5000, "config_version": 1}'::jsonb, 'Parámetros del algoritmo de control de aireación (PID, Fuzzy, límites RPM y consignas)')
+    ('aeration_control_config', '{"control_mode": "pid", "target_do_mg_l": 7.5, "pid_gains": {"kp": 100.0, "ki": 1.5, "kd": 10.0}, "fuzzy_profile": "standard_pond", "min_rpm": 0, "max_rpm": 3200, "failsafe_rpm": 500, "manual_throttle_pct": 0.0, "sampling_interval_ms": 2000, "telemetry_interval_ms": 5000, "config_version": 1}'::jsonb, 'Parámetros del algoritmo de control de aireación (PID, Fuzzy, límites RPM y consignas)'),
+    ('experiments_registry', '[]'::jsonb, 'Registro canónico de experimentos activos e históricos')
 ON CONFLICT (key) DO NOTHING;
 
 -- ==============================================================================
@@ -208,6 +235,9 @@ ALTER TABLE public.motor_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.alerts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.control_commands ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.system_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sensor_telemetry_bulk ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.odrive_telemetry_bulk ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.mixer_events ENABLE ROW LEVEL SECURITY;
 
 -- Política de lectura pública/anónima autorizada para la dashboard (o lectura autenticada si hay Supabase Auth)
 CREATE POLICY "Permitir lectura publica de dispositivos" ON public.devices FOR SELECT USING (true);
@@ -218,6 +248,9 @@ CREATE POLICY "Permitir lectura publica de alertas" ON public.alerts FOR SELECT 
 CREATE POLICY "Permitir actualizar estado de alertas" ON public.alerts FOR UPDATE USING (true) WITH CHECK (true);
 CREATE POLICY "Permitir lectura y creacion de comandos" ON public.control_commands FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Permitir lectura de configuraciones" ON public.system_settings FOR SELECT USING (true);
+CREATE POLICY "Permitir full en sensor bulk" ON public.sensor_telemetry_bulk FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Permitir full en odrive bulk" ON public.odrive_telemetry_bulk FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Permitir full en mixer events" ON public.mixer_events FOR ALL USING (true) WITH CHECK (true);
 
 -- Habilitar Realtime para tablas críticas en Supabase
 ALTER PUBLICATION supabase_realtime ADD TABLE public.sensor_readings;

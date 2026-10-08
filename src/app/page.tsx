@@ -7,6 +7,7 @@ import { SensorControlPanel } from '@/components/SensorControlPanel';
 import { ClearDatabaseModal } from '@/components/ClearDatabaseModal';
 import { MotorControlPanel } from '@/components/MotorControlPanel';
 import { MixerControlPanel } from '@/components/MixerControlPanel';
+import { ManualOverridePanel } from '@/components/ManualOverridePanel';
 import { ChartsSection } from '@/components/ChartsSection';
 import { EventsTable } from '@/components/EventsTable';
 import { AlertsPanel } from '@/components/AlertsPanel';
@@ -132,6 +133,29 @@ export default function DashboardPage() {
     }
   };
 
+  const handleForceCommand = async (target: string, action: string) => {
+     let device_id = '';
+     if (target === 'odrive') device_id = 'b0000000-0000-0000-0000-000000000002';
+     if (target === 'mixer') device_id = 'c0000000-0000-0000-0000-000000000003';
+     if (target === 'pump') device_id = 'd0000000-0000-0000-0000-000000000004';
+
+     try {
+       await fetch('/api/commands', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            device_id,
+            command_type: 'set_config',
+            payload: { action },
+            requested_by: 'Manual Override (God Mode)'
+          })
+       });
+       fetchDashboardData(true);
+     } catch (err) {
+       console.error('Error enviando force command:', err);
+     }
+  };
+
   return (
     <div className="min-h-screen bg-[#080c14] text-slate-100 flex flex-col">
       {/* Header Superior */}
@@ -220,7 +244,12 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* 4. Gráficas Principales (OD, Velocidad, Combinada y Experimento Activo) */}
+        {/* 4. Panel de Emergencia / Manual Override */}
+        <section>
+          <ManualOverridePanel onForceCommand={handleForceCommand} />
+        </section>
+
+        {/* 5. Gráficas Principales (OD, Velocidad, Combinada y Experimento Activo) */}
         <section id="charts-section">
           <ChartsSection
             history={history}
