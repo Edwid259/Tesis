@@ -16,6 +16,8 @@ const { parseArgs, resolveSupabaseCreds, CADENCE } = require('./config');
 const { ApiClient, Store } = require('./transport');
 const { buildFleet } = require('./fleet');
 const { ProcessModel, doSaturationMgL, UNIDENTIFIED } = require('./models/process');
+const { T200 } = require('./models/mixer');
+const ODRIVE_C = require('./models/constants').odrive;
 
 /** Roles reales del banco. La planta se expone junto a la flota, así que nunca se itera `fleet`. */
 const NODE_ROLES = ['sensor', 'odrive', 'mixer', 'pump'];
@@ -120,14 +122,16 @@ const SCENARIOS = {
       await waitFor(() => fleet.mixer.targetRpm === 0, 10000, 'que el mixer se detenga');
       assertTrue(fleet.mixer.targetRpm === 0, 'El mixer debe estar detenido');
 
-      // El aireador debe GIRAR de verdad: es lo que nunca ocurría antes.
-      await waitFor(() => fleet.odrive.loopState().actualRpm > 1, 15000,
-        `El aireador debe girar tras armarse al 40% (RPM actual: ${fleet.odrive.loopState().actualRpm})`);
+      // El aireador debe GIRAR de verdad y alcanzar la consigna: es lo que nunca ocurría antes
+      // (el ODrive jamás se armaba). Se espera a que la rampa llegue al escalón, no sólo a que arranque.
+      const expectedRpm = (Number(motor.motor_throttle_pct) / 100) * ODRIVE_C.MAX_MOTOR_RPM;
+      await waitFor(() => Math.abs(fleet.odrive.loopState().actualRpm - expectedRpm) < expectedRpm * 0.05,
+        20000, `que el aireador alcance ~${expectedRpm} RPM al ${motor.motor_throttle_pct}% ` +
+        `(RPM actual: ${fleet.odrive.loopState().actualRpm.toFixed(1)})`);
       const rpm = fleet.odrive.loopState().actualRpm;
-      return [`escalón 40%`, `aireador girando a ${rpm.toFixed(1)} RPM`, 'mixer detenido'];
+      return [`escalón 40%`, `aireador girando a ${rpm.toFixed(1)} RPM (consigna ${expectedRpm})`, 'mixer detenido'];
     }
   },
-
   /** Caso B: lazo cerrado. El aireador debe armarse en PID con el setpoint. */
   pidArming: {
     description: 'Caso B (armado PID): el aireador queda en PID con el setpoint y el signo es correcto',
@@ -245,14 +249,27 @@ const SCENARIOS = {
       await waitFor(() => fleet.mixer.actualRpm > 1, 20000, 'que el mixer gire');
 
       const st = fleet.mixer;
-      assertTrue(st.targetRpm > 0 && st.targetRpm <= 1000,
-        `La consigna debe estar dentro del tope del ESC (1000 RPM), reportó ${st.targetRpm}`);
+      assertTrue(st.targetRpm > 0 && st.targetRpm <= 3800,
+        `La consigna debe estar dentro del tope del T-200 (3800 RPM), reportó ${st.targetRpm.toFixed(0)}`);
       assertTrue(st.actualRpm > 1, `El mixer debe estar girando (reportó ${st.actualRpm.toFixed(0)} RPM)`);
-      // El duty es la salida del PI y oscila alrededor del punto de operación; lo que importa es que
-      // se mantenga dentro de la saturación del PWM.
-      assertTrue(st.duty >= 0 && st.duty <= 100,
-        `El duty debe estar en 0-100 % (reportó ${st.duty})`);
+      assertTrue(st.duty >= 0 && st.duty <= 1,
+        `El duty del driver debe estar en 0-1 (reportó ${st.duty})`);
       assertTrue(st.mixerEvents.length > 0, 'Debe haber registrado el evento start_mixer');
+      const rpmWhileSpinning = st.actualRpm;
+      const dutyWhileSpinning = st.duty;
+
+      // La telemetría debe ser la del T-200 real: PI con gains, unidades SI y duty.
+      const t = st.lastTelemetry;
+      assertTrue(t, 'El mixer debe publicar telemetría');
+      for (const f of ['target_rpm', 'actual_rpm', 'target_rad_s', 'actual_rad_s', 'commanded_duty',
+        'kp', 'ki', 'kd', 'status_code', 'is_running', 'rtc_timestamp_ms']) {
+        assertTrue(t[f] !== undefined, `La telemetría del T-200 debe incluir '${f}'`);
+      }
+      assertTrue(t.kp === 0.00274565 && t.ki === 0.00642846 && t.kd === 0,
+        `Los gains deben ser los del firmware (Kp=${t.kp} Ki=${t.ki} Kd=${t.kd})`);
+      assertTrue(t.actual_rad_s === (t.actual_rpm * 2 * Math.PI) / 60 ||
+        Math.abs(t.actual_rad_s - (t.actual_rpm * 2 * Math.PI) / 60) < 0.01,
+        'Las RPM y los rad/s deben ser coherentes');
 
       const off = await api.post('/api/commands', {
         device_id: devices.mixer.id, command_type: 'stop', speed_percent: 0,
@@ -260,7 +277,8 @@ const SCENARIOS = {
       });
       assertTrue(off.ok, `No se pudo detener el mixer (HTTP ${off.status})`);
       await waitFor(() => st.targetRpm === 0, 10000, 'que el mixer se detenga');
-      return [`gira a ${st.actualRpm.toFixed(0)} RPM (tope ESC 1000)`, 'evento start_mixer registrado', 'se detiene'];
+      return [`gira a ${rpmWhileSpinning.toFixed(0)} RPM de ${T200.MAX_THRUSTER_RPM} (driver con PI, duty ${dutyWhileSpinning.toFixed(2)})`,
+        'evento start_mixer registrado', 'se detiene'];
     }
   },
   /** INTEGRIDAD DEL SENSOR: el ítem que publica debe tener la forma exacta del hardware real. */
@@ -282,9 +300,10 @@ const SCENARIOS = {
       // Unidades nativas del firmware: entero en milli-mg/L, no un float en mg/L.
       assertTrue(Number.isInteger(item.do_milli_mg_l),
         `do_milli_mg_l debe ser entero en milli-mg/L (es ${item.do_milli_mg_l})`);
-      assertTrue(item.do_milli_mg_l === Math.round(fleet.process.doMgL * 1000) ||
-        Math.abs(item.do_milli_mg_l / 1000 - fleet.process.doMgL) < 0.01,
-        'El OD reportado debe corresponder al de la planta');
+      assertTrue(item.do_milli_mg_l === Math.round(fleet.sensor.plantDoAtSample * 1000) ||
+        Math.abs(item.do_milli_mg_l / 1000 - fleet.sensor.plantDoAtSample) < 0.01,
+        `El OD reportado (${item.do_milli_mg_l / 1000} mg/L) debe corresponder al de la planta en el ` +
+        `instante del muestreo (${fleet.sensor.plantDoAtSample} mg/L)`);
       // Coherencia %Sat ↔ mg/L con la solubilidad real a esa temperatura.
       const sat = doSaturationMgL(item.water_temp_centi / 100);
       const expectedPct = (item.do_milli_mg_l / 1000 / sat) * 100;

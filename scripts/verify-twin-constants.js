@@ -129,7 +129,52 @@ assert.ok(!/rejectedSamples\+\+[\s\S]{0,200}updateProcessVariable/.test(fleetSrc
   'REGRESIÓN: una muestra rechazada no debe actualizar la variable de proceso');
 ok('El gemelo no inyecta el cero fantasma en el lazo');
 
+console.log('\n[Test 6] Mixer T-200: driver con PI (NO un ESC)...');
+const t200Src = read('Codigos/t-200-controller/src/esp32s3_main.cpp');
+const { T200 } = require('./virtual-bench/models/mixer');
+const t200Pairs = [
+  // [nombre en el firmware, patrón, valor del gemelo]
+  ['Ts', /\.Ts\s*=\s*([\d.]+)f/, T200.Ts],
+  ['max_slew_rate', /\.max_slew_rate\s*=\s*([\d.]+)f/, T200.MAX_SLEW_RATE],
+  ['MAX_THRUSTER_RPM', /MAX_THRUSTER_RPM\s*=\s*([\d.]+)f/, T200.MAX_THRUSTER_RPM],
+  ['MOTOR_MIN_SPIN_DUTY', /MOTOR_MIN_SPIN_DUTY\s*=\s*([\d.]+)f/, T200.MIN_SPIN_DUTY],
+  ['MOTOR_MAX_ALLOWED_DUTY', /MOTOR_MAX_ALLOWED_DUTY\s*=\s*([\d.]+)f/, T200.MAX_ALLOWED_DUTY]
+];
+for (const [name, re, twin] of t200Pairs) {
+  const m = t200Src.match(re);
+  assert.ok(m, `No se encontró ${name} en el firmware del T-200`);
+  assert.ok(Math.abs(Number(m[1]) - twin) < 1e-9,
+    `${name}: firmware=${m[1]} vs gemelo=${twin} — actualiza models/mixer.js`);
+}
+// Los clamps del integrador y los pares de polos viven dentro del run del PI
+const clamps = t200Src.match(/constrain\(pid\.integral,\s*(-?[\d.]+)f,\s*(-?[\d.]+)f\)/);
+assert.ok(clamps, 'No se encontró el clamp del integrador');
+assert.ok(Math.abs(Number(clamps[1]) - T200.INTEGRAL_MIN) < 1e-9 &&
+  Math.abs(Number(clamps[2]) - T200.INTEGRAL_MAX) < 1e-9,
+  `Clamp del integrador: firmware=[${clamps[1]}, ${clamps[2]}] vs gemelo=[${T200.INTEGRAL_MIN}, ${T200.INTEGRAL_MAX}]`);
+const poles = t200Src.match(/BLDC_POLE_PAIRS\s*=\s*(\d+)/);
+assert.ok(poles && Number(poles[1]) === T200.POLE_PAIRS,
+  `POLE_PAIRS: firmware=${poles && poles[1]} vs gemelo=${T200.POLE_PAIRS}`);
+// Los gains del PI deben coincidir con los del struct PidController
+for (const key of ['Kp', 'Ki', 'Kd']) {
+  const m = t200Src.match(new RegExp(`\\.${key}\\s*=\\s*(-?[\\d.]+)f`));
+  assert.ok(m, `No se encontró .${key} en el firmware del T-200`);
+  assert.ok(Math.abs(Number(m[1]) - T200[key]) < 1e-12,
+    `${key}: firmware=${m[1]} vs gemelo=${T200[key]}`);
+}
+// Debe ser un DRIVER con PI realimentado por FG, no un ESC de servo
+assert.ok(/integral \+= pid\.Ki \* error \* pid\.Ts/.test(t200Src.replace(/\s+/g, ' ')),
+  'La integral debe acumular Ki*error*Ts como el firmware');
+assert.ok(t200Src.includes('max_delta = pid.max_slew_rate * pid.Ts'), 'Debe existir el limitador de slew');
+// La linearización analítica del integrador RC del driver es lo que distingue al T-200 de un servo.
+assert.ok(/Linearization/.test(t200Src) && /ENABLE_PWM_LINEARIZATION/.test(t200Src),
+  'Debe existir el compensador de linearización del driver');
+assert.ok(/effectiveDuty\s*=\s*MOTOR_MIN_SPIN_DUTY\s*\+/.test(t200Src.replace(/\s+/g, ' ')),
+  'El duty debe escalarse a la banda activa [MIN_SPIN_DUTY .. MAX_ALLOWED_DUTY]');
+assert.ok(/LEDC_PWM_MAX_TICKS/.test(t200Src), 'El PWM es LEDC por ticks, no pulsos de servo');
+ok('6 constantes + 3 gains + clamps + polos del T-200 verificados; es driver con PI, no ESC');
+
 console.log('\n====================================================');
-console.log(` SIN DERIVA: EL GEMELO REPRESENTA AL FIRMWARE (${passed}/5) `);
+console.log(` SIN DERIVA: EL GEMELO REPRESENTA AL FIRMWARE (${passed}/6) `);
 console.log('====================================================');
-assert.ok(passed === 5, `Se esperaban 5 bloques, se ejecutaron ${passed}`);
+assert.ok(passed === 6, `Se esperaban 6 bloques, se ejecutaron ${passed}`);

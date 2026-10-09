@@ -89,10 +89,18 @@ assert.ok(/st == "IDLE" \|\| st == "MANUAL_OVERRIDE"/.test(t200Cloud),
   'IDLE y MANUAL_OVERRIDE deben apagar el mixer');
 assert.ok(t200Cloud.includes('ACTIVE_EXPERIMENT sin campo `mixer`: no se toca el actuador'),
   'Sin campo explícito no debe tocar el actuador');
-// El magnetismo previo forzaba 1500 RPM sobre un ESC limitado a 1000 RPM.
-assert.ok(!t200Cloud.includes('1500.0f'), 'REGRESIÓN: no debe forzarse 1500 RPM (tope del ESC = 1000)');
-assert.ok(t200Cloud.includes('MIXER_DEFAULT_RPM'), 'Debe usar una constante de velocidad de mezcla');
-ok('Mixer explícito, apagado en IDLE/MANUAL_OVERRIDE, velocidad dentro del tope');
+// El magnetismo previo forzaba 1500 RPM sin relación con el tope real del actuador.
+assert.ok(!t200Cloud.includes('1500.0f'), 'REGRESIÓN: no debe forzarse 1500 RPM');
+const mixerRpm = Number((t200Cloud.match(/MIXER_DEFAULT_RPM\s*=\s*([\d.]+)f/) || [])[1]);
+assert.ok(Number.isFinite(mixerRpm), 'Debe usar una constante de velocidad de mezcla');
+// El T-200 es un driver con PI (no un ESC): su tope real son 3800 RPM.
+const maxThrusterRpm = Number(
+  (readRepo('Codigos/t-200-controller/src/esp32s3_main.cpp').match(/MAX_THRUSTER_RPM\s*=\s*([\d.]+)f/) || [])[1]
+);
+assert.ok(maxThrusterRpm === 3800, `El tope del T-200 debe ser 3800 RPM (leído: ${maxThrusterRpm})`);
+assert.ok(mixerRpm > 0 && mixerRpm <= maxThrusterRpm,
+  `MIXER_DEFAULT_RPM (${mixerRpm}) debe estar dentro del tope del T-200 (${maxThrusterRpm} RPM)`);
+ok(`Mixer explícito, apagado en IDLE/MANUAL_OVERRIDE, ${mixerRpm} RPM dentro del tope de ${maxThrusterRpm}`);
 
 console.log('\n[Test 6] Firmware ODrive: armado por receta + liberación de E-Stop...');
 assert.ok(odriveCloud.includes('motorModeStr'), 'Debe leer motor_mode del set_state');
