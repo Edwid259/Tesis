@@ -522,7 +522,8 @@ class MixerNode extends BaseNode {
   /** Telemetría completa del T-200: exactamente los campos que envía el firmware. */
   async postTelemetry() {
     if (this.stopped) return;
-    const payload = this.driver.telemetry(nowMs());
+    const payload = this.driver.telemetry(nowMs(),
+      this.systemState === 'ACTIVE_EXPERIMENT' && this.experimentId ? this.experimentId : 'idle');
     this.lastTelemetry = payload;
     const res = await this.api.devicePost('/api/telemetry/motor', this.device.key, payload);
     this.recordPush(res, 'motor');

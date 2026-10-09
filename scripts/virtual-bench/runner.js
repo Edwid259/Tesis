@@ -28,7 +28,9 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function waitFor(predicate, timeoutMs, label) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (predicate()) return true;
+    // `await` a propósito: los predicados que consultan la BD son asíncronos, y sin esperarlos
+    // devolverían una promesa (siempre "verdadera") y la espera pasaría de inmediato.
+    if (await predicate()) return true;
     await sleep(250);
   }
   throw new Error(`Timeout esperando: ${label} (${timeoutMs} ms)`);
@@ -71,7 +73,7 @@ const SCENARIOS = {
   /** Planta 1: mixer ON (disuelve el Na2SO3), ODrive deliberadamente apagado. */
   planta1: {
     description: 'Planta 1 (desoxigenación): mixer encendido y aireador apagado',
-    async run({ createExperiment, fleet }) {
+    async run({ createExperiment, fleet, store }) {
       const exp = await createExperiment({
         case_type: 'planta_1_deox', plant_target: 'planta_1', controller_type: 'none', parameters: {}
       });
@@ -83,11 +85,12 @@ const SCENARIOS = {
       // La intención viaja en el `set_state` difundido (vía única para los 4 nodos). Cada nodo
       // sondea su propia cola, así que hay que esperar a que AMBOS hayan recibido la suya: leer el
       // payload del ODrive tras esperar sólo al mixer medía una carrera, no el contrato.
-      await expectAction(fleet.mixer, 'set_state');
-      await waitFor(() => fleet.mixer.lastPayloadOf('set_state')?.mixer !== undefined, 15000,
-        'que el mixer reciba su intención');
-      await waitFor(() => fleet.odrive.lastPayloadOf('set_state')?.motor_mode !== undefined, 15000,
-        'que el aireador reciba su intención');
+      // Se espera por el `experiment_id` de ESTE ensayo y no por "que exista un payload": una orden
+      // rezagada de la corrida anterior satisface el segundo y la aserción leería su valor.
+      await waitFor(() => fleet.mixer.lastPayloadOf('set_state')?.experiment_id === exp.id, 15000,
+        'que el mixer reciba la intención de este ensayo');
+      await waitFor(() => fleet.odrive.lastPayloadOf('set_state')?.experiment_id === exp.id, 15000,
+        'que el aireador reciba la intención de este ensayo');
       const mix = fleet.mixer.lastPayloadOf('set_state');
       assertTrue(mix.mixer === 'on', `El mixer debe recibir mixer='on' en Planta 1 (recibió '${mix.mixer}')`);
       assertTrue(fleet.mixer.targetRpm > 0, 'El mixer debe estar girando');
@@ -96,6 +99,18 @@ const SCENARIOS = {
       assertTrue(motor.motor_mode === 'off',
         `El aireador debe quedar en motor_mode 'off' en Planta 1 (recibió '${motor.motor_mode}')`);
       assertTrue(fleet.odrive.loopState().targetRpm === 0, 'El aireador no debe demandar RPM');
+
+      // El mixer publica en `/api/telemetry/motor` (objeto suelto) y ahí es donde faltaba el
+      // archivado: su tabla por rol quedaba vacía aunque la migración estuviera aplicada.
+      await waitFor(() => fleet.mixer.lastTelemetry?.experiment_id === exp.id, 15000,
+        `que la telemetría del mixer se atribuya al ensayo (reportó '${fleet.mixer.lastTelemetry?.experiment_id}')`);
+      if (store.available) {
+        await waitFor(async () => {
+          const filas = await store.query('mixer_telemetry',
+            `select=id&experiment_id=eq.${encodeURIComponent(exp.id)}&limit=1`);
+          return Array.isArray(filas) && filas.length > 0;
+        }, 20000, 'que el mixer archive al menos una muestra en su tabla por rol');
+      }
       return ["armed=[mixer]", "mixer='on' girando", "aireador en motor_mode 'off'"];
     }
   },
@@ -111,10 +126,10 @@ const SCENARIOS = {
       assertTrue(exp.armed.includes('odrive'), `El servidor debe declarar el aireador armado (armed: [${exp.armed.join(', ')}])`);
       assertTrue(exp.armed.includes('mixer_off'), `El servidor debe declarar el mixer detenido (armed: [${exp.armed.join(', ')}])`);
 
-      await waitFor(() => fleet.odrive.lastPayloadOf('set_state')?.motor_mode !== undefined, 15000,
-        'que el aireador reciba su intención');
-      await waitFor(() => fleet.mixer.lastPayloadOf('set_state')?.mixer !== undefined, 15000,
-        'que el mixer reciba su intención');
+      await waitFor(() => fleet.odrive.lastPayloadOf('set_state')?.experiment_id === exp.id, 15000,
+        'que el aireador reciba la intención de este ensayo');
+      await waitFor(() => fleet.mixer.lastPayloadOf('set_state')?.experiment_id === exp.id, 15000,
+        'que el mixer reciba la intención de este ensayo');
 
       const motor = fleet.odrive.lastPayloadOf('set_state');
       assertTrue(motor.motor_mode === 'manual', `El aireador debe armarse en manual (recibió '${motor.motor_mode}')`);
@@ -146,8 +161,9 @@ const SCENARIOS = {
       });
       assertTrue(exp.armed.includes('odrive'), 'El servidor debe declarar el aireador armado');
 
-      await waitFor(() => fleet.odrive.lastPayloadOf('set_state')?.motor_mode === 'pid', 15000,
-        `que el aireador reciba motor_mode 'pid' (recibió '${fleet.odrive.lastPayloadOf('set_state')?.motor_mode}')`);
+      await waitFor(() => fleet.odrive.lastPayloadOf('set_state')?.motor_mode === 'pid' &&
+        fleet.odrive.lastPayloadOf('set_state')?.experiment_id === exp.id, 15000,
+        `que el aireador reciba motor_mode 'pid' para este ensayo (recibió '${fleet.odrive.lastPayloadOf('set_state')?.motor_mode}')`);
       const motor = fleet.odrive.lastPayloadOf('set_state');
       assertTrue(Number(motor.motor_target_do) === 5.0,
         `El setpoint debe viajar (recibió ${motor.motor_target_do})`);
@@ -514,11 +530,9 @@ const SCENARIOS = {
       const res = await api.post('/api/system/state', { state: 'MANUAL_OVERRIDE', requested_by: 'Banco virtual' });
       assertTrue(res.ok, `La transición a MANUAL_OVERRIDE falló (HTTP ${res.status})`);
 
-      await expectAction(fleet.mixer, 'set_state');
-      await expectAction(fleet.odrive, 'set_state');
-      await waitFor(() => fleet.mixer.lastPayloadOf('set_state')?.mixer !== undefined &&
-        fleet.odrive.lastPayloadOf('set_state')?.motor_mode !== undefined, 15000,
-        'que ambos actuadores reciban su intención');
+      await waitFor(() => fleet.mixer.lastPayloadOf('set_state')?.state === 'MANUAL_OVERRIDE' &&
+        fleet.odrive.lastPayloadOf('set_state')?.state === 'MANUAL_OVERRIDE', 15000,
+        'que ambos actuadores reciban la anulación');
       const mix = fleet.mixer.lastPayloadOf('set_state');
       const mot = fleet.odrive.lastPayloadOf('set_state');
       assertTrue(mix.state === 'MANUAL_OVERRIDE' && mix.mixer === 'off',

@@ -212,9 +212,14 @@ class MixerDriver {
   radsToRpm(radS) { return (radS / TWO_PI) * 60.0; }
   get rpm() { return this.radsToRpm(this.actualRadS); }
 
-  /** Telemetría EXACTA que publica el firmware del T-200 en `/api/telemetry/motor`. */
-  telemetry(rtcMs) {
+  /**
+   * Telemetría EXACTA que publica el firmware del T-200 en `/api/telemetry/motor`.
+   * Incluye `experiment_id`: el firmware lo recibe en el `set_state` y lo adjunta a cada muestra,
+   * de modo que el archivo por rol queda atribuido al ensayo correcto.
+   */
+  telemetry(rtcMs, experimentId = 'idle') {
     return {
+      experiment_id: experimentId,
       target_rpm: Math.round(this.radsToRpm(this.targetRadS) * 100) / 100,
       actual_rpm: Math.round(this.rpm * 100) / 100,
       target_rad_s: Math.round(this.targetRadS * 10000) / 10000,
