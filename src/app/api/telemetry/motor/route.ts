@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateDevice } from '@/lib/deviceAuth';
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
+import { archiveRolePayload, ArchiveOutcome } from '@/lib/telemetryArchive';
+import { isActuatorRole } from '@/lib/deviceRoles';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,9 +21,18 @@ export const dynamic = 'force-dynamic';
  * }
  */
 export async function POST(req: NextRequest) {
-  // 1. Autenticar dispositivo mediante X-Device-Key
-  const { device, errorResponse } = await authenticateDevice(req, 'motor_thruster');
-  if (errorResponse || !device) return errorResponse ?? NextResponse.json({ error: 'Dispositivo no autorizado' }, { status: 401 });
+  // Autorización por ROL: el ODrive, el mixer y la bomba comparten el tipo legacy `motor_thruster`,
+  // así que el tipo no basta para decidir a qué tabla archivar. Antes esta ruta se autenticaba
+  // contra `motor_thruster` y NUNCA archivaba: el T-200 publica aquí (objeto único, no lote) y su
+  // tabla `mixer_telemetry` quedaba permanentemente vacía.
+  const { device, role, errorResponse } = await authenticateDevice(req, undefined, undefined);
+  if (errorResponse) return errorResponse;
+  if (!device) {
+    return NextResponse.json({ error: 'Dispositivo no autorizado' }, { status: 401 });
+  }
+  if (!isActuatorRole(role)) {
+    return NextResponse.json({ error: 'Endpoint reservado a actuadores (odrive/mixer/pump)' }, { status: 403 });
+  }
 
   try {
     const body = await req.json();
@@ -30,8 +41,7 @@ export async function POST(req: NextRequest) {
       ? body.samples 
       : [body];
 
-    const rowsToInsert = rawList.map((item: any) => {
-      const is_on = Boolean(item.is_on ?? item.is_running);
+    const rowsToInsert = rawList.map((item: any) => {      const is_on = Boolean(item.is_on ?? item.is_running);
       const speed_percent = Number(item.speed_percent ?? 0);
       const pwm_us = item.pwm_us !== undefined ? Number(item.pwm_us) : 1500;
       const voltage_v = item.voltage_v !== undefined ? Number(item.voltage_v) : null;
@@ -41,13 +51,8 @@ export async function POST(req: NextRequest) {
         : (voltage_v && current_a ? Number((voltage_v * current_a).toFixed(2)) : null);
       const status_code = Number(item.status_code ?? 0);
       const target_rpm = item.target_rpm !== undefined ? Number(item.target_rpm) : null;
-      const actual_rpm = item.actual_rpm !== undefined ? Number(item.actual_rpm) : null;
-      const target_rad_s = item.target_rad_s !== undefined ? Number(item.target_rad_s) : null;
-      const actual_rad_s = item.actual_rad_s !== undefined ? Number(item.actual_rad_s) : null;
-      const commanded_duty = item.commanded_duty !== undefined ? Number(item.commanded_duty) : null;
-      const kp = item.kp !== undefined ? Number(item.kp) : null;
-      const ki = item.ki !== undefined ? Number(item.ki) : null;
-      const kd = item.kd !== undefined ? Number(item.kd) : null;
+      const actual_rpm = item.actual_rpm !== undefined ? Number(item.actual_rpm)
+        : (item.rpm !== undefined ? Number(item.rpm) : null);
       const recordedAt = item.datetime ? new Date(item.datetime).toISOString() : new Date().toISOString();
 
       return {
@@ -59,21 +64,43 @@ export async function POST(req: NextRequest) {
         voltage_v,
         current_a,
         power_w,
-        status_code
+        status_code,
+        rpm: actual_rpm,
+        target_rpm
       };
     });
 
     const latest = rowsToInsert[rowsToInsert.length - 1];
+    let archiveOutcome: ArchiveOutcome = 'skipped';
+    let ingestWarning: string | null = null;
 
     // Si Supabase está configurado, guardar en PostgreSQL
     if (isSupabaseConfigured() && device) {
-      const { error: insertError } = await supabaseAdmin
-        .from('motor_telemetry')
-        .insert(rowsToInsert);
+      // 1. Archivar en la tabla dedicada del rol: la fidelidad completa del T-200 vive aquí y
+      //    `motor_telemetry` sólo conserva la vista en vivo.
+      const experimentId = typeof body?.experiment_id === 'string' && body.experiment_id
+        ? body.experiment_id
+        : 'backend_resolved';
+      archiveOutcome = await archiveRolePayload(role, experimentId, body);
+      if (archiveOutcome === 'missing_table') {
+        console.warn(`[telemetry/motor] Archivado omitido para rol '${role}' (tabla inexistente).`);
+      }
+
+      // 2. Vista en vivo. `rpm`/`target_rpm` se envían y, si el entorno no las tiene, se reintenta
+      //    sin ellas: PostgREST rechaza el INSERT entero ante una columna inexistente (PGRST204).
+      let { error: insertError } = await supabaseAdmin.from('motor_telemetry').insert(rowsToInsert);
+      if (insertError?.code === 'PGRST204') {
+        console.warn('motor_telemetry sin columnas rpm/target_rpm; reintentando sin ellas');
+        const sinRpm = rowsToInsert.map((row: any) => {
+          const { rpm, target_rpm, ...rest } = row;
+          return rest;
+        });
+        ({ error: insertError } = await supabaseAdmin.from('motor_telemetry').insert(sinRpm as typeof rowsToInsert));
+      }
 
       if (insertError) {
         console.error('Error guardando telemetría de motor:', insertError);
-        return NextResponse.json({ error: 'Error al persistir telemetría de motor' }, { status: 500 });
+        ingestWarning = `${insertError.code || 'error'}: ${insertError.message}`;
       }
 
       await supabaseAdmin
@@ -89,6 +116,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       message: 'Telemetría de motor recibida correctamente',
+      archived: archiveOutcome,
+      // Un fallo de ingesta no puede ser silencioso: el firmware reportaba HTTP 200 y la pérdida
+      // de datos pasaba inadvertida.
+      ingested: ingestWarning ? 0 : rowsToInsert.length,
+      warning: ingestWarning,
       data: {
         recorded_at: latest.recorded_at,
         is_on: latest.is_on,

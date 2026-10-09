@@ -81,7 +81,16 @@ assert.ok(archive.includes('20261008_separate_actuator_roles.sql'), 'El aviso de
 assert.ok(archive.includes('warnedTables'), 'El aviso no debe repetirse en cada lote de 5 s');
 assert.ok(motorBulk.includes('archiveRolePayload'), 'motor_bulk debe archivar por rol');
 assert.ok(!motorBulk.includes(".from('odrive_telemetry_bulk')"), 'REGRESIÓN: no debe archivar todo en odrive_telemetry_bulk');
-ok('Archivado por rol con aviso accionable una sola vez');
+// El T-200 publica un objeto suelto en /api/telemetry/motor (no un lote), y esa ruta no archivaba:
+// `mixer_telemetry` quedaba vacía para siempre aunque la tabla existiera.
+assert.ok(motorSingle.includes('archiveRolePayload'),
+  'REGRESIÓN: /api/telemetry/motor debe archivar en la tabla del rol (el mixer llega por aquí)');
+assert.ok(motorSingle.includes("from '@/lib/telemetryArchive'"),
+  'La ruta de objeto suelto debe usar el mismo archivado por rol');
+assert.ok(!/authenticateDevice\(req, 'motor_thruster'\)/.test(motorSingle),
+  'REGRESIÓN: no debe autenticarse contra el tipo legacy; el rol se resuelve por device_id');
+assert.ok(motorSingle.includes('isActuatorRole'), 'Debe restringirse a actuadores por rol');
+ok('Archivado por rol con aviso accionable una sola vez (lote y objeto suelto)');
 
 console.log('\n[Test 5] `rpm` existe ya en producción y se persiste con degradación segura...');
 // La migración 20261008 añadió la columna, y `db.js audit` la confirma desplegada.
