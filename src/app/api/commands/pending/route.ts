@@ -1,31 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateDevice } from '@/lib/deviceAuth';
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
+import { resolveCommandPayload } from '@/lib/commandPayload';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 export const fetchCache = 'force-no-store';
-
-/**
- * Normaliza el payload de una orden de `control_commands`.
- * En la BD de producción no existe la columna `payload`: el JSON viaja serializado en
- * `error_message`. Sin esta reconstrucción cualquier lectura de `row.payload` es `undefined`,
- * lo que ya causó una mala clasificación de órdenes entre nodos.
- */
-function resolveCommandPayload(row: any): Record<string, any> {
-  let payload = row?.payload;
-  if (!payload || typeof payload !== 'object' || Object.keys(payload).length === 0) {
-    const raw = row?.error_message;
-    if (typeof raw === 'string' && raw.trim().startsWith('{')) {
-      try {
-        payload = JSON.parse(raw);
-      } catch {
-        payload = null;
-      }
-    }
-  }
-  return payload && typeof payload === 'object' ? payload : {};
-}
 
 /**
  * Permite que cualquier dispositivo ESP32 autenticado (motor_thruster o sensor_do)

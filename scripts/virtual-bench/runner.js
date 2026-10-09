@@ -14,7 +14,7 @@
  */
 const { parseArgs, resolveSupabaseCreds, CADENCE } = require('./config');
 const { ApiClient, Store } = require('./transport');
-const { buildFleet } = require('./fleet');
+const { buildFleet, MixerNode } = require('./fleet');
 const { ProcessModel, doSaturationMgL, UNIDENTIFIED } = require('./models/process');
 const { T200 } = require('./models/mixer');
 const ODRIVE_C = require('./models/constants').odrive;
@@ -247,6 +247,11 @@ const SCENARIOS = {
       });
       assertTrue(res.ok, `No se pudo encolar el mixer (HTTP ${res.status})`);
       await waitFor(() => fleet.mixer.actualRpm > 1, 20000, 'que el mixer gire');
+      // El mixer debe llegar a la consigna por defecto (600 RPM), no sólo empezar a girar: el driver
+      // necesita superar su umbral de arranque (0.25 de duty) antes de que el PI tome el control.
+      const defaultRpm = MixerNode.DEFAULT_RPM;
+      await waitFor(() => Math.abs(fleet.mixer.actualRpm - defaultRpm) < defaultRpm * 0.05, 25000,
+        `que el mixer alcance ~${defaultRpm} RPM (actual: ${fleet.mixer.actualRpm.toFixed(1)})`);
 
       const st = fleet.mixer;
       assertTrue(st.targetRpm > 0 && st.targetRpm <= 3800,
@@ -516,12 +521,96 @@ const SCENARIOS = {
         `El mixer debe recibir state=MANUAL_OVERRIDE y mixer='off' (recibió ${mix.state}/${mix.mixer})`);
       assertTrue(mot.state === 'MANUAL_OVERRIDE' && mot.motor_mode === 'off',
         `El motor debe recibir state=MANUAL_OVERRIDE y motor_mode='off' (recibió ${mot.state}/${mot.motor_mode})`);
-      assertTrue(fleet.odrive.loopState().targetRpm === 0, 'El aireador debe quedar a 0 RPM');
+      // Se espera al EFECTO, no al ACK: el lazo de 20 Hz aplica la consigna en el siguiente tick.
+      try {
+        await waitFor(() => fleet.odrive.loopState().targetRpm === 0, 5000,
+          'que el aireador quede a 0 RPM');
+      } catch (e) {
+        const s = fleet.odrive.loopState();
+        throw new Error(`${e.message} (estado real: targetRpm=${s.targetRpm} actualRpm=${s.actualRpm} ` +
+          `mode=${s.mode} eStop=${s.eStop} failsafe=${s.failsafe})`);
+      }
       assertTrue(fleet.mixer.targetRpm === 0, 'El mixer debe quedar detenido');
       return ['mixer=off', 'motor_mode=off', 'receta abortada en los 4 nodos'];
     }
   },
 
+  /**
+   * MANUAL_OVERRIDE DEBE abortar la receta, incluso la que aún no se entregó.
+   *
+   * Defecto real: `broadcastState` difundía el nuevo estado pero dejaba intactas las órdenes
+   * `pending` del estado anterior. Como los nodos aplican lo último que reciben, un `set_state`
+   * de ACTIVE_EXPERIMENT encolado un instante antes llegaba DESPUÉS y re-armaba el PID: la
+   * anulación manual quedaba silenciosamente sin efecto. Medido en producción con el escenario
+   * `manualOverride` (el aireador no bajaba a 0 RPM).
+   */
+  overrideAbortsRecipe: {
+    description: 'MANUAL_OVERRIDE invalida la receta aún encolada en vez de dejarla llegar después',
+    async run({ api, fleet, store, createExperiment, waitFor, sleep, snapshot }) {
+      assertTrue(store.available, 'Este escenario necesita credenciales de BD para inspeccionar la cola');
+
+      // 0. Se detiene el polling para que la orden quede encolada con certeza: si no, la prueba
+      //    mediría una carrera entre el consumo del nodo y el override, no el mecanismo.
+      for (const role of NODE_ROLES) fleet[role].pauseCommandPolling();
+
+      // 1. Se arma una receta: encola un `set_state` de ACTIVE_EXPERIMENT por nodo.
+      await createExperiment({
+        case_type: 'planta_2_step', plant_target: 'planta_2', controller_type: 'none',
+        parameters: { step_throttle_pct: 60 }
+      });
+      const encoladas = await store.query('control_commands', 'select=id,error_message&status=eq.pending');
+      const arranque = (encoladas || []).filter(r => {
+        try { return JSON.parse(r.error_message || '{}').action === 'set_state'; } catch { return false; }
+      }).length;
+      assertTrue(arranque > 0, 'La receta debió dejar órdenes de arranque encoladas y sin entregar');
+
+      // 2. El operador aborta de inmediato, antes de que los nodos consuman toda la cola.
+      const res = await api.post('/api/system/state', {
+        state: 'MANUAL_OVERRIDE', requested_by: 'Banco virtual (aborto de receta)'
+      });
+      assertTrue(res.ok, `La transición a MANUAL_OVERRIDE falló (HTTP ${res.status})`);
+
+      // 3. Ninguna orden de arranque puede seguir pendiente.
+      await sleep(1000);
+      const pendientes = await store.query('control_commands', 'select=id,error_message&status=eq.pending');
+      assertTrue(pendientes !== null, 'No se pudo leer la cola de órdenes');
+      const rezagadas = pendientes.filter(r => {
+        let p = {};
+        try { p = JSON.parse(r.error_message || '{}'); } catch { /* no es JSON: no es de orquestación */ }
+        return p.action === 'set_state' && p.state === 'ACTIVE_EXPERIMENT';
+      });
+      assertTrue(rezagadas.length === 0,
+        `Quedaron ${rezagadas.length} orden(es) de ACTIVE_EXPERIMENT pendientes: llegarían después del ` +
+        `override y re-armarían el actuador`);
+
+      // 3b. Y la prueba positiva: las obsoletas fueron EXPIRADAS, no simplemente consumidas.
+      const marca = snapshot?.control_commands;
+      assertTrue(marca, 'Se necesita la marca temporal previa para aislar las filas de esta corrida');
+      const expiradas = await store.query('control_commands',
+        `select=id&status=eq.expired&created_at=gt.${encodeURIComponent(marca)}`);
+      assertTrue(expiradas && expiradas.length >= arranque,
+        `Las ${arranque} órdenes de arranque obsoletas debieron quedar "expired" ` +
+        `(se encontraron ${expiradas ? expiradas.length : 'null'})`);
+
+      // 4. Se reanuda el polling: los nodos deben quedarse en el estado de anulación, sin que una
+      //    orden rezagada los re-arme.
+      for (const role of NODE_ROLES) fleet[role].resumeCommandPolling();
+      await waitFor(() => fleet.odrive.lastPayloadOf('set_state')?.state === 'MANUAL_OVERRIDE', 20000,
+        'que el aireador reciba el estado de anulación');
+      await sleep(2500); // margen para que llegue cualquier orden rezagada (ya no debe haber)
+      assertTrue(fleet.odrive.lastPayloadOf('set_state')?.state === 'MANUAL_OVERRIDE',
+        'El aireador no debe recibir ninguna orden de arranque después del override');
+      await waitFor(() => fleet.odrive.loopState().targetRpm === 0, 8000,
+        `que el aireador quede a 0 RPM (actual: ${fleet.odrive.loopState().targetRpm})`);
+      assertTrue(fleet.mixer.targetRpm === 0, 'El mixer no debe arrancar tras el override');
+
+      return [
+        `${arranque} orden(es) de arranque encoladas antes de abortar`,
+        `${expiradas.length} invalidada(s) como "expired" tras el override`,
+        'el aireador quedó a 0 RPM y no se re-armó'
+      ];
+    }
+  },
   /** E-Stop y su liberación explícita: antes no había forma de salir del latch. */
   estop: {
     description: 'E-Stop y liberación explícita con clear_estop',

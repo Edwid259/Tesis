@@ -50,19 +50,41 @@ class BaseNode {
     this.systemState = 'IDLE';
     this.experimentId = null;
     this.timers = [];
+    this.pollTimers = [];
+    this.pollingPaused = false;
     this.stopped = false;
   }
 
   setExperiment(id) { this.experimentId = id; }
 
   start() {
-    this.timers.push(setInterval(() => this.pollCommands(), CADENCE.commandPollMs));
+    this.pollTimers.push(setInterval(() => this.pollCommands(), CADENCE.commandPollMs));
+  }
+
+  /**
+   * Detiene el polling de comandos sin apagar el nodo (los lazos y la telemetría siguen).
+   * El banco lo usa para reproducir de forma determinista la ventana en la que una orden de
+   * receta aún está encolada y el operador aborta: sin esto, los nodos podían consumirla antes
+   * del override y la prueba medía una carrera en vez del mecanismo.
+   */
+  pauseCommandPolling() {
+    this.pollingPaused = true;
+    for (const t of this.pollTimers) clearInterval(t);
+    this.pollTimers = [];
+  }
+
+  resumeCommandPolling() {
+    if (!this.pollingPaused) return;
+    this.pollingPaused = false;
+    this.pollTimers.push(setInterval(() => this.pollCommands(), CADENCE.commandPollMs));
   }
 
   stop() {
     this.stopped = true;
     for (const t of this.timers) clearInterval(t);
+    for (const t of this.pollTimers) clearInterval(t);
     this.timers = [];
+    this.pollTimers = [];
   }
 
   /** Consume los comandos pendientes hasta agotarlos (descarta residuos de corridas anteriores). */

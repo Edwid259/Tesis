@@ -102,6 +102,14 @@ class Store {
     return res.body[0][column];
   }
 
+  /** Consulta PostgREST cruda sobre una tabla (para las aserciones del banco). */
+  async query(table, qs) {
+    if (!this.available) return null;
+    const res = await request(`${this.creds.url}/rest/v1/${table}?${qs}`, { headers: this.headers });
+    if (!res.ok || !Array.isArray(res.body)) return null;
+    return res.body;
+  }
+
   /** Snapshot de las marcas de todas las tablas que el banco podría escribir. */
   async snapshot() {
     if (!this.available) return null;

@@ -1,6 +1,7 @@
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { OrchestratorState, SystemState, OverrideFlags, CommandStatus, DeviceRole } from '@/types';
 import { resolveActuatorRecipe, buildActuatorIntent } from '@/lib/experimentRecipe';
+import { isSupersededByStateChange } from '@/lib/commandPayload';
 import {
   DEVICE_ID_BY_ROLE,
   ALL_DEVICE_IDS as ALL_CANONICAL_DEVICE_IDS,
@@ -159,6 +160,47 @@ export async function getRegisteredExperiment(experimentId: string | null): Prom
 }
 
 /**
+ * Invalida las órdenes de orquestación que quedaron `pending` de un estado anterior.
+ *
+ * **Por qué existe:** un `set_state` encolado por una receta y aún sin entregar se servía al nodo
+ * DESPUÉS del `set_state` de MANUAL_OVERRIDE. Como los nodos aplican lo último que reciben, una
+ * anulación manual quedaba silenciosamente anulada y el PID volvía a armarse solo. Se detectó en
+ * producción con el banco virtual (`manualOverride`): el aireador no bajaba a 0 RPM.
+ *
+ * El filtro es por `action` del payload y no por `command_type`, porque `command_type` no
+ * distingue: `clear_estop` viaja como `set_speed`, igual que un `set_state`. Las acciones de
+ * seguridad y las dosis ya ordenadas se preservan (ver `commandPayload.ts`).
+ */
+export async function supersedePendingOrchestrationCommands(): Promise<number> {
+  if (!isSupabaseConfigured()) return 0;
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('control_commands')
+      .select('id, error_message, status')
+      .eq('status', 'pending')
+      .limit(500);
+    if (error || !Array.isArray(data)) return 0;
+
+    const stale = data.filter(isSupersededByStateChange).map((r: any) => r.id);
+    if (stale.length === 0) return 0;
+
+    const { error: updErr } = await supabaseAdmin
+      .from('control_commands')
+      // `expired` es un estado terminal del CHECK de producción: la orden ya no se sirve.
+      .update({ status: 'expired' })
+      .in('id', stale);
+    if (updErr) {
+      console.error('[systemState] No se pudieron invalidar órdenes obsoletas:', updErr.message);
+      return 0;
+    }
+    return stale.length;
+  } catch (err: any) {
+    console.error('[systemState] Error al invalidar órdenes obsoletas:', err?.message);
+    return 0;
+  }
+}
+
+/**
  * Difunde un `set_state` a todos los nodos del banco. Devuelve cuántas órdenes se encolaron.
  *
  * El payload incluye la intención EXPLÍCITA de cada actuador, resuelta desde el registro de
@@ -167,6 +209,10 @@ export async function getRegisteredExperiment(experimentId: string | null): Prom
  * fuerza a OFF porque una anulación manual debe abortar cualquier automatismo (ADD §2.3).
  */
 export async function broadcastState(state: SystemState, requested_by: string): Promise<number> {
+  // El estado nuevo es autoritativo: lo que quede encolado de un estado anterior deja de valer.
+  // Se invalida ANTES de encolar para no cancelar las órdenes recién creadas.
+  await supersedePendingOrchestrationCommands();
+
   const experiment = await getRegisteredExperiment(state.experiment_id);
   const intent = buildActuatorIntent(state.state, resolveActuatorRecipe(experiment));
 

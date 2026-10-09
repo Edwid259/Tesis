@@ -72,6 +72,32 @@ assert.ok(summaryRoute.includes('systemState'), 'El campo systemState debe estar
 assert.ok(page.includes('OrchestratorBar'), 'El dashboard debe renderizar la barra de orquestación');
 assert.ok(bar.includes('MANUAL_OVERRIDE') && bar.includes('ACTIVE_EXPERIMENT'), 'La barra debe exponer los estados');
 
+// Defecto real: el override difundía el estado pero dejaba intactas las órdenes `pending` del
+// estado anterior. Un `set_state` de ACTIVE_EXPERIMENT encolado un instante antes llegaba DESPUÉS
+// (los nodos aplican lo último que reciben) y re-armaba el PID: la anulación manual quedaba
+// silenciosamente sin efecto. Medido en producción con el banco virtual (`manualOverride`).
+console.log('\n[Test 5] El cambio de estado invalida la receta aún encolada...');
+const payloadLib = read('src/lib/commandPayload.ts');
+assert.ok(stateLib.includes('supersedePendingOrchestrationCommands'),
+  'broadcastState debe invalidar las órdenes de orquestación obsoletas');
+// La invalidación debe ocurrir ANTES de encolar, o cancelaría las órdenes recién creadas.
+const idxInvalidar = stateLib.indexOf('await supersedePendingOrchestrationCommands()');
+const idxPrimerEnqueue = stateLib.indexOf('await enqueueCommand(', idxInvalidar);
+assert.ok(idxInvalidar > 0 && idxPrimerEnqueue > idxInvalidar,
+  'La invalidación debe preceder al encolado del nuevo set_state');
+assert.ok(/status: 'expired'/.test(stateLib), 'Las obsoletas deben quedar en un estado terminal');
+assert.ok(/eq\('status', 'pending'\)/.test(stateLib), 'Solo se invalidan las que aún están pendientes');
+// El filtro va por `action` del payload: `command_type` no distingue (`clear_estop` viaja como `set_speed`).
+assert.ok(payloadLib.includes("'set_state'") && payloadLib.includes("'start_experiment'"),
+  'Las acciones de orquestación deben estar declaradas en un solo lugar');
+for (const segura of ['emergency_stop', 'clear_estop', 'start_dose']) {
+  assert.ok(!new RegExp(`ORCHESTRATION_ACTIONS[\\s\\S]{0,400}'${segura}'`).test(payloadLib),
+    `La acción de seguridad/física '${segura}' nunca debe invalidarse`);
+}
+assert.ok(read('src/app/api/commands/pending/route.ts').includes("from '@/lib/commandPayload'"),
+  'El resolutor de payload debe ser compartido, no duplicado');
+ok('Órdenes obsoletas expiradas antes de encolar; seguridad y dosis preservadas');
+
 // Lógica de normalización (reimplementación verificada)
 const VALID = ['IDLE', 'ACTIVE_EXPERIMENT', 'MANUAL_OVERRIDE'];
 function normalize(raw) {
@@ -84,5 +110,5 @@ assert.strictEqual(normalize(null), 'IDLE');
 ok('UI, resumen y normalización defensiva verificados');
 
 console.log('\n====================================================');
-console.log(' TODAS LAS COMPROBACIONES PASARON CORRECTAMENTE (4/4) ');
+console.log(' TODAS LAS COMPROBACIONES PASARON CORRECTAMENTE (5/5) ');
 console.log('====================================================');
