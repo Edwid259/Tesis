@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { authenticateDevice } from '@/lib/deviceAuth';
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { MAX_BULK_ITEMS, resolveItemEpochMs, NO_STORE_HEADERS } from '@/lib/bulk';
-import { archiveRolePayload } from '@/lib/telemetryArchive';
+import { archiveRolePayload, resolveActiveExperimentId } from '@/lib/telemetryArchive';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
 
     if (isSupabaseConfigured() && device) {
       // 1. Archivar la serie completa en la tabla dedicada del rol.
-      const archiveOutcome = await archiveRolePayload(role ?? 'sensor', experiment_id || 'idle', payload);
+      const archiveOutcome = await archiveRolePayload(role ?? 'sensor', await resolveActiveExperimentId(experiment_id), payload);
       if (archiveOutcome === 'missing_table') {
         console.warn('[sensor_bulk] Archivado omitido: falta sensor_telemetry_bulk (migración pendiente).');
       }

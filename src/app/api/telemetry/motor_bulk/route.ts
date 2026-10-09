@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { authenticateDevice } from '@/lib/deviceAuth';
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { MAX_BULK_ITEMS, resolveItemEpochMs, NO_STORE_HEADERS } from '@/lib/bulk';
-import { archiveRolePayload, ArchiveOutcome } from '@/lib/telemetryArchive';
+import { archiveRolePayload, ArchiveOutcome, resolveActiveExperimentId } from '@/lib/telemetryArchive';
 import { isActuatorRole } from '@/lib/deviceRoles';
 
 export const dynamic = 'force-dynamic';
@@ -41,24 +41,10 @@ export async function POST(req: NextRequest) {
     let ingestedRows = 0;
 
     if (isSupabaseConfigured() && device) {
-      let final_experiment_id = experiment_id;
-      if (final_experiment_id === 'backend_resolved') {
-          const { data: settingRow } = await supabaseAdmin
-            .from('system_settings')
-            .select('value')
-            .eq('key', 'experiments_registry')
-            .maybeSingle();
-
-          if (settingRow && Array.isArray(settingRow.value)) {
-            const activeExp = settingRow.value.find((e: any) => e.status === 'active');
-            final_experiment_id = activeExp ? activeExp.id : 'idle';
-          } else {
-            final_experiment_id = 'idle';
-          }
-      }
-
       // 1. Archivar la serie completa en la tabla dedicada del ROL (odrive/mixer/pump).
-      resolvedExperimentId = final_experiment_id || 'idle';
+      //    `backend_resolved` se traduce al experimento activo: guardarlo literal dejaría la fila
+      //    huérfana y la descarga CSV por experimento no la encontraría.
+      resolvedExperimentId = await resolveActiveExperimentId(experiment_id);
       const archiveOutcomeResult = await archiveRolePayload(role, resolvedExperimentId, payload);
       archiveOutcome = archiveOutcomeResult;
       if (archiveOutcomeResult === 'missing_table') {

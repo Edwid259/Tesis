@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateDevice } from '@/lib/deviceAuth';
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
-import { archiveRolePayload, ArchiveOutcome } from '@/lib/telemetryArchive';
+import { archiveRolePayload, ArchiveOutcome, resolveActiveExperimentId } from '@/lib/telemetryArchive';
 import { isActuatorRole } from '@/lib/deviceRoles';
 
 export const dynamic = 'force-dynamic';
@@ -78,9 +78,7 @@ export async function POST(req: NextRequest) {
     if (isSupabaseConfigured() && device) {
       // 1. Archivar en la tabla dedicada del rol: la fidelidad completa del T-200 vive aquí y
       //    `motor_telemetry` sólo conserva la vista en vivo.
-      const experimentId = typeof body?.experiment_id === 'string' && body.experiment_id
-        ? body.experiment_id
-        : 'backend_resolved';
+      const experimentId = await resolveActiveExperimentId(body?.experiment_id);
       archiveOutcome = await archiveRolePayload(role, experimentId, body);
       if (archiveOutcome === 'missing_table') {
         console.warn(`[telemetry/motor] Archivado omitido para rol '${role}' (tabla inexistente).`);

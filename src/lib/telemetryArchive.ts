@@ -20,6 +20,30 @@ export type ArchiveOutcome = 'stored' | 'missing_table' | 'error' | 'skipped';
 const warnedTables = new Set<string>();
 
 /**
+ * Resuelve el id del experimento al que pertenece una lectura.
+ *
+ * El firmware no conoce el id que acuñó el backend, así que envía `"backend_resolved"`. Guardarlo
+ * literal deja la fila huérfana: la descarga CSV por experimento busca por `experiment_id` y no la
+ * encontraría. Vive aquí para que todas las rutas de telemetría resuelvan igual.
+ */
+export async function resolveActiveExperimentId(raw: unknown): Promise<string> {
+  const requested = typeof raw === 'string' && raw ? raw : 'idle';
+  if (requested !== 'backend_resolved') return requested;
+  try {
+    const { data } = await supabaseAdmin
+      .from('system_settings')
+      .select('value')
+      .eq('key', 'experiments_registry')
+      .maybeSingle();
+    const list = Array.isArray(data?.value) ? data.value : [];
+    const active = list.find((e: any) => e?.status === 'active');
+    return active?.id || 'idle';
+  } catch {
+    return 'idle';
+  }
+}
+
+/**
  * Guarda un lote completo (payload JSON) en la tabla de archivo del rol.
  * @returns `stored` si se persistió, `missing_table` si falta la tabla de archivo, `skipped`/`error` en el resto.
  */
