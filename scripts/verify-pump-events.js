@@ -16,9 +16,9 @@ console.log('====================================================');
 console.log(' VERIFICACIÓN DE ACTUADORES: MIXER T-200 Y BOMBA   ');
 console.log('====================================================\n');
 
-const pumpMain = read('../Codigos/pump-controller/src/main.cpp');
-const pumpCfg = read('../Codigos/pump-controller/src/config.h');
-const t200 = read('../Codigos/t-200-controller/src/cloud_worker.cpp');
+const pumpMain = read('../Codigos/nodo-bomba/src/main.cpp');
+const pumpCfg = read('../Codigos/nodo-bomba/src/config.h');
+const t200 = read('../Codigos/nodo-mezclador/src/cloud_worker.cpp');
 const pumpRoute = read('src/app/api/events/pump/route.ts');
 const overrideRoute = read('src/app/api/events/override/route.ts');
 const mixerRoute = read('src/app/api/events/mixer/route.ts');

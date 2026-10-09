@@ -41,8 +41,8 @@ function expectNumber(firmwareValue, twinValue, label) {
     `${label}: firmware=${fw} vs gemelo=${twinValue} — actualiza models/constants.js`);
 }
 
-console.log('[Test 1] Límites y lazos del aireador (odrive-controller/src/config.h)...');
-const odriveCfg = read('Codigos/odrive-controller/src/config.h');
+console.log('[Test 1] Límites y lazos del aireador (nodo-aerador/src/config.h)...');
+const odriveCfg = read('Codigos/nodo-aerador/src/config.h');
 const pairs = [
   ['MAX_MOTOR_RPM', C.odrive.MAX_MOTOR_RPM],
   ['MIN_MOTOR_RPM', C.odrive.MIN_MOTOR_RPM],
@@ -68,7 +68,7 @@ for (const [name, twin] of pairs) {
 ok(`${pairs.length} constantes del ODrive verificadas contra el firmware`);
 
 console.log('\n[Test 2] Constantes del modelo físico (odrive_virtual.cpp)...');
-const odriveVirt = read('Codigos/odrive-controller/src/odrive_virtual.cpp');
+const odriveVirt = read('Codigos/nodo-aerador/src/odrive_virtual.cpp');
 assert.ok(odriveVirt.includes('_rampRate * 1.5f * dt'),
   'COAST_RAMP_FACTOR debe ser 1.5 (coastRamp = rampRate * 1.5 * dt)');
 expectNumber('1.5', C.odriveModel.COAST_RAMP_FACTOR, 'COAST_RAMP_FACTOR');
@@ -82,8 +82,8 @@ assert.ok(odriveVirt.includes('_nominalRpm') === false && odriveVirt.includes('n
   'La carga debe ser cuadrática con la velocidad');
 ok('6 constantes del modelo físico verificadas');
 
-console.log('\n[Test 3] Sensor OPTOD (od-logger/src/n_logger_config.h)...');
-const loggerCfg = read('Codigos/od-logger/src/n_logger_config.h');
+console.log('\n[Test 3] Sensor OPTOD (nodo-sensor-od/src/n_logger_config.h)...');
+const loggerCfg = read('Codigos/nodo-sensor-od/src/n_logger_config.h');
 const loggerPairs = [
   ['OD_SLAVE_ID', 'SLAVE_ID'],
   ['OD_MODBUS_READ_COUNT', 'READ_COUNT'],
@@ -98,7 +98,7 @@ for (const [name, key] of loggerPairs) {
 expectNumber(defineValue(loggerCfg, 'OD_BAUD'), model.OD.BAUD, 'OD_BAUD');
 
 // El bit de confianza debe coincidir con el firmware
-const nLoggerConfig = read('Codigos/od-logger/src/n_logger_config.h');
+const nLoggerConfig = read('Codigos/nodo-sensor-od/src/n_logger_config.h');
 const odBit = Number(defineValue(nLoggerConfig, 'STATUS_OD_SENSOR_BIT'));
 assert.strictEqual(odBit, C.statusBits.OD_SENSOR,
   `STATUS_OD_SENSOR_BIT: firmware=${odBit} vs gemelo=${C.statusBits.OD_SENSOR}`);
@@ -130,7 +130,7 @@ assert.ok(!/rejectedSamples\+\+[\s\S]{0,200}updateProcessVariable/.test(fleetSrc
 ok('El gemelo no inyecta el cero fantasma en el lazo');
 
 console.log('\n[Test 6] Mixer T-200: driver con PI (NO un ESC)...');
-const t200Src = read('Codigos/t-200-controller/src/esp32s3_main.cpp');
+const t200Src = read('Codigos/nodo-mezclador/src/esp32s3_main.cpp');
 const { T200 } = require('./virtual-bench/models/mixer');
 const t200Pairs = [
   // [nombre en el firmware, patrón, valor del gemelo]

@@ -52,9 +52,9 @@ assert.ok(/diffMs <= 15000/.test(charts), 'Debe descartar marcadores sin muestra
 assert.ok(/dot=\{\{ r: 4/.test(charts), 'Debe preservar la visibilidad N=1 (dot r=4)');
 ok('Marcador de perturbación anclado al instante de ejecución; N=1 preservado');
 
-console.log('\n[Test 5] Los firmware reportan rtc_timestamp_ms en el ACK...');const odrive = read('../Codigos/odrive-controller/src/cloud_worker.cpp');
-const t200 = read('../Codigos/t-200-controller/src/cloud_worker.cpp');
-const pump = read('../Codigos/pump-controller/src/main.cpp');
+console.log('\n[Test 5] Los firmware reportan rtc_timestamp_ms en el ACK...');const odrive = read('../Codigos/nodo-aerador/src/cloud_worker.cpp');
+const t200 = read('../Codigos/nodo-mezclador/src/cloud_worker.cpp');
+const pump = read('../Codigos/nodo-bomba/src/main.cpp');
 assert.ok(odrive.includes('doc["rtc_timestamp_ms"] = rtc'), 'ODrive debe enviar rtc_timestamp_ms');
 assert.ok(odrive.includes('currentRtcMs'), 'ODrive debe extrapolar el Reloj Maestro');
 assert.ok(t200.includes('ackDoc["rtc_timestamp_ms"]'), 'T-200 debe enviar rtc_timestamp_ms (NTP)');

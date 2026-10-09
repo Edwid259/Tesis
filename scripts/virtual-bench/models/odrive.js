@@ -1,5 +1,5 @@
 /**
- * Port fiel de `Codigos/odrive-controller/src/odrive_virtual.cpp`.
+ * Port fiel de `Codigos/nodo-aerador/src/odrive_virtual.cpp`.
  *
  * Es un reemplazo directo del driver ODrive S1: simula inercia rotacional, rampa de aceleración y
  * frenado, corriente de carga hidrodinámica cuadrática con la velocidad, corriente dinámica de

@@ -2,7 +2,7 @@
  * Verificación de FIDELIDAD del gemelo: compara el PID en JavaScript contra el MOTOR REAL en C++.
  *
  * Cómo funciona:
- *  1. Compila `Codigos/odrive-controller/src/control_engine.cpp` (el de producción, no una copia)
+ *  1. Compila `Codigos/nodo-aerador/src/control_engine.cpp` (el de producción, no una copia)
  *     junto a `test/host/dump_control_reference.cpp`, con stubs mínimos de Arduino.
  *  2. Ejecuta el binario para obtener una trayectoria de referencia determinista.
  *  3. Corre el port `models/controlEngine.js` con el MISMO escenario, paso a paso.
@@ -21,7 +21,7 @@ const os = require('os');
 const { ControlEngine, MODE_PID } = require('./models/controlEngine');
 
 const WEB_ROOT = path.join(__dirname, '..', '..');
-const FW_ROOT = path.join(WEB_ROOT, '..', 'Codigos', 'odrive-controller');
+const FW_ROOT = path.join(WEB_ROOT, '..', 'Codigos', 'nodo-aerador');
 const HOST_DIR = path.join(FW_ROOT, 'test', 'host');
 
 let passed = 0;

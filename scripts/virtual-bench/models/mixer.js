@@ -1,12 +1,12 @@
 /**
- * Port fiel del nodo MIXER (t-200-controller): DRIVER con lazo PI cerrado.
+ * Port fiel del nodo MIXER (nodo-mezclador): DRIVER con lazo PI cerrado.
  *
  * ⚠️ CORRECCIÓN IMPORTANTE: este nodo NO usa un ESC ni PWM de servo. Usa un **driver SNR8503M**
  * comandado por PWM de 10 kHz (lógica invertida, con linealización analítica de su integrador RC) y
  * **realimentación por tacómetro FG**: el lazo PI vive DENTRO del controlador, midiendo el período
  * de los pulsos del driver. Modelado antes como un ESC genérico, lo cual era incorrecto.
  *
- * Fuentes (`Codigos/t-200-controller/src/esp32s3_main.cpp` e `include/config.h`):
+ * Fuentes (`Codigos/nodo-mezclador/src/esp32s3_main.cpp` e `include/config.h`):
  *   - PI de velocidad en unidades SI (rad/s) a 100 Hz
  *   - Anti-windup por saturación del integrador y limitador de slew en la salida
  *   - Detección de atasco con recuperación automática

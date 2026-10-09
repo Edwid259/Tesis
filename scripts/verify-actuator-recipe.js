@@ -30,9 +30,9 @@ const stateLib = read('src/lib/systemState.ts');
 const expRoute = read('src/app/api/experiments/route.ts');
 const pendingRoute = read('src/app/api/commands/pending/route.ts');
 const motorPanel = read('src/components/MotorControlPanel.tsx');
-const odriveCloud = readRepo('Codigos/odrive-controller/src/cloud_worker.cpp');
-const odriveEngine = readRepo('Codigos/odrive-controller/src/control_engine.cpp');
-const t200Cloud = readRepo('Codigos/t-200-controller/src/cloud_worker.cpp');
+const odriveCloud = readRepo('Codigos/nodo-aerador/src/cloud_worker.cpp');
+const odriveEngine = readRepo('Codigos/nodo-aerador/src/control_engine.cpp');
+const t200Cloud = readRepo('Codigos/nodo-mezclador/src/cloud_worker.cpp');
 
 console.log('[Test 1] Existe una única fuente de verdad de la receta...');
 assert.ok(recipe.includes('export function resolveActuatorRecipe'), 'Debe exportar resolveActuatorRecipe');
@@ -95,7 +95,7 @@ const mixerRpm = Number((t200Cloud.match(/MIXER_DEFAULT_RPM\s*=\s*([\d.]+)f/) ||
 assert.ok(Number.isFinite(mixerRpm), 'Debe usar una constante de velocidad de mezcla');
 // El T-200 es un driver con PI (no un ESC): su tope real son 3800 RPM.
 const maxThrusterRpm = Number(
-  (readRepo('Codigos/t-200-controller/src/esp32s3_main.cpp').match(/MAX_THRUSTER_RPM\s*=\s*([\d.]+)f/) || [])[1]
+  (readRepo('Codigos/nodo-mezclador/src/esp32s3_main.cpp').match(/MAX_THRUSTER_RPM\s*=\s*([\d.]+)f/) || [])[1]
 );
 assert.ok(maxThrusterRpm === 3800, `El tope del T-200 debe ser 3800 RPM (leído: ${maxThrusterRpm})`);
 assert.ok(mixerRpm > 0 && mixerRpm <= maxThrusterRpm,

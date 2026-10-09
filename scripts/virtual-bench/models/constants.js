@@ -6,7 +6,7 @@
  */
 
 module.exports = {
-  /* ===== Codigos/odrive-controller/src/config.h ===== */
+  /* ===== Codigos/nodo-aerador/src/config.h ===== */
   odrive: {
     DEFAULT_TARGET_DO_MG_L: 7.5,
     DEFAULT_KP: 100.0,
@@ -37,7 +37,7 @@ module.exports = {
     VIRTUAL_IBUS_MAX_LOAD: 9.5         // coherente con el límite ±10 A del ODrive
   },
 
-  /* ===== Codigos/odrive-controller/src/odrive_virtual.cpp ===== */
+  /* ===== Codigos/nodo-aerador/src/odrive_virtual.cpp ===== */
   odriveModel: {
     STATE_IDLE: 1,
     STATE_CLOSED_LOOP: 8,
@@ -50,14 +50,14 @@ module.exports = {
     TORQUE_OMEGA_MIN: 0.1
   },
 
-  /* ===== Codigos/od-logger/src/config.h ===== */
+  /* ===== Codigos/nodo-sensor-od/src/config.h ===== */
   logger: {
     LOCAL_TZ_OFFSET_SEC: 5 * 3600,  // UTC-5 Perú
     AQUACONTROL_PATH: '/api/telemetry/sensor_bulk',
     DEVICE_KEY: 'ESP32_OD_SENSOR'
   },
 
-  /* ===== Codigos/od-logger/src/n_logger_config.h ===== */
+  /* ===== Codigos/nodo-sensor-od/src/n_logger_config.h ===== */
   statusBits: {
     INTERNET: 0,
     FULL_MEMORY: 1,

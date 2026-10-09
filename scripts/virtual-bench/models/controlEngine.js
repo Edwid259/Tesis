@@ -1,5 +1,5 @@
 /**
- * Port fiel de `Codigos/odrive-controller/src/control_engine.cpp`.
+ * Port fiel de `Codigos/nodo-aerador/src/control_engine.cpp`.
  *
  * Reproduce el orden de decisión EXACTO de `computeOutputRpm()`:
  *   e-stop -> MANUAL -> sin primera muestra -> watchdog 35 s -> PID/Fuzzy -> saturación 0-600.
