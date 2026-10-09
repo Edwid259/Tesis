@@ -19,6 +19,7 @@ const { OdLogger } = require('./models/odLogger');
 const { MasterClock, ExtrapolatedClock } = require('./models/masterClock');
 const { EspNowLink } = require('./models/espnow');
 const { ProcessModel } = require('./models/process');
+const { MixerDriver, T200 } = require('./models/mixer');
 const { odrive: ODRIVE_C } = require('./models/constants');
 
 const nowMs = () => Date.now();
@@ -200,6 +201,9 @@ class SensorNode extends BaseNode {
   measureOnce() {
     const m = this.sensor.takeMeasurement(nowMs());
     this.lastMeasurement = m;
+    // Verdad de la planta en el instante exacto del muestreo. El OD evoluciona, así que el ítem
+    // publicado debe corresponder a ESTE valor y no al que la planta tenga cuando se revise.
+    this.plantDoAtSample = this.sensor.trueDoMgL;
 
     if (this.link) {
       this.link.send({
@@ -336,10 +340,13 @@ class ODriveNode extends BaseNode {
       voltage_v: Math.round(t.vbus_voltage * 100) / 100,
       current_a: Math.round(t.ibus_current * 100) / 100,
       power_w: Math.round(t.power_watts * 10) / 10,
-      torque_nm: t.torque_estimate,
+      torque_nm: Math.round(t.torque_estimate * 10000) / 10000,
       iq_a: Math.round(t.ibus_current * 10000) / 10000,
       status_code: t.axis_error,
-      rtc_timestamp_ms: this.clock.currentRtcMs(nowMs())
+      rtc_timestamp_ms: this.clock.currentRtcMs(nowMs()),
+      // Sólo para replicar el promediado del lote en flush(); se eliminan antes de publicar.
+      _ibus_current: t.ibus_current,
+      _power_watts: t.power_watts
     };
     this.buffer.push(this.lastSample);
     if (this.buffer.length >= 25) this.flush();
@@ -353,7 +360,18 @@ class ODriveNode extends BaseNode {
 
   async flush() {
     if (this.stopped || this.buffer.length === 0) return;
-    const payload = this.buffer.splice(0, 200);
+    const batch = this.buffer.splice(0, 200);
+
+    // Fiel a cloud_worker.cpp: las medidas ruidosas del bus DC (shunt conmutado por PWM) se
+    // promedian sobre TODO el lote antes de subirlas. `iq_a` y `torque_nm` NO se promedian.
+    const n = batch.length;
+    const avgIbus = batch.reduce((a, s) => a + s._ibus_current, 0) / n;
+    const avgPower = batch.reduce((a, s) => a + s._power_watts, 0) / n;
+    const payload = batch.map(({ _ibus_current, _power_watts, ...item }) => ({
+      ...item,
+      current_a: Math.round(avgIbus * 100) / 100,
+      power_w: Math.round(avgPower * 10) / 10
+    }));
     const res = await this.api.devicePost('/api/telemetry/motor_bulk', this.device.key, {
       experiment_id: this.systemState === 'ACTIVE_EXPERIMENT' ? (this.experimentId || 'backend_resolved') : 'idle',
       payload
@@ -421,50 +439,45 @@ class ODriveNode extends BaseNode {
 
 /* ============================ Nodo MIXER ============================= */
 
-/** T-200: PWM + lazo PI cerrado. El ESC está limitado a 1000 RPM (`BLDC_MAX_RPM`). */
-const BLDC_MAX_RPM = 1000;
-const MIXER_DEFAULT_RPM = 600;
-
+/**
+ * Mixer: T-200 con **driver SNR8503M** y lazo **PI cerrado** con realimentación por tacómetro FG.
+ * NO es un ESC: el lazo corre a 100 Hz dentro del controlador y la salida es un duty PWM que comanda
+ * al driver. Todo el modelo (gains, clamps, slew, umbrales y curva de parada) vive en
+ * `models/mixer.js`, portado del firmware.
+ */
 class MixerNode extends BaseNode {
   constructor(opts) {
     super(opts);
-    this.targetRpm = 0;
-    this.actualRpm = 0;
-    this.kp = 0.02;
-    this.ki = 0.01;
-    this.integral = 0;
-    this.duty = 0;
+    this.driver = new MixerDriver();
     this.mixerEvents = [];
+    this.lastTelemetry = null;
     /** Planta compartida: la agitación mejora la transferencia de oxígeno. */
     this.process = opts.process || null;
   }
 
   start() {
     super.start();
-    this.timers.push(setInterval(() => this.loop10Hz(), 100));
-    this.timers.push(setInterval(() => this.postTelemetry(), 5000));
+    // El firmware corre el lazo a 100 Hz y publica telemetría cada 3000 ms.
+    this.timers.push(setInterval(() => this.controlLoop(), T200.Ts * 1000));
+    this.timers.push(setInterval(() => this.postTelemetry(), 3000));
   }
 
-  /** Lazo PI con anti-windup y saturación de duty (espejo del lazo real del T-200). */
-  loop10Hz() {
+  /** Un paso del PI real. */
+  controlLoop() {
     if (this.stopped) return;
-    const dt = 0.1;
-    if (this.targetRpm <= 0) {
-      this.integral = 0;
-      this.duty = 0;
-      this.actualRpm = Math.max(0, this.actualRpm - 300 * dt);
-      return;
-    }
-    const error = this.targetRpm - this.actualRpm;
-    this.integral += error * dt;
-    this.integral = Math.max(-100, Math.min(100, this.integral));
-    this.duty = Math.max(0, Math.min(100, (this.kp * error + this.ki * this.integral) * 100));
-    this.actualRpm += (this.duty / 100) * 900 * dt - this.actualRpm * 0.05;
-    this.actualRpm = Math.max(0, Math.min(BLDC_MAX_RPM, this.actualRpm));
+    this.driver.step(nowMs());
   }
+
+  /** Compatibilidad con las aserciones del banco. */
+  get targetRpm() { return (this.driver.targetRadS / (2 * Math.PI)) * 60; }
+  get actualRpm() { return this.driver.rpm; }
+  get duty() { return this.driver.commandedDuty; }
+
+  /** El mixer va al 600 RPM por defecto (dentro del tope de 3800 RPM del T-200). */
+  static get DEFAULT_RPM() { return 600; }
 
   async setMixer(on) {
-    this.targetRpm = on ? MIXER_DEFAULT_RPM : 0;
+    this.driver.setTargetRadS(on ? (MixerNode.DEFAULT_RPM * 2 * Math.PI) / 60 : 0);
     if (this.process) this.process.setMixer(on);
     const res = await this.api.devicePost('/api/events/mixer', this.device.key, {
       experiment_id: this.experimentId || 'idle',
@@ -475,19 +488,12 @@ class MixerNode extends BaseNode {
     this.mixerEvents.push({ on, status: res.status });
   }
 
+  /** Telemetría completa del T-200: exactamente los campos que envía el firmware. */
   async postTelemetry() {
     if (this.stopped) return;
-    const speedPercent = (this.actualRpm / BLDC_MAX_RPM) * 100;
-    const res = await this.api.devicePost('/api/telemetry/motor', this.device.key, {
-      target_rpm: this.targetRpm,
-      actual_rpm: this.actualRpm,
-      target_rad_s: (this.targetRpm * 2 * Math.PI) / 60,
-      actual_rad_s: (this.actualRpm * 2 * Math.PI) / 60,
-      commanded_duty: this.duty,
-      status_code: 0,
-      is_running: this.targetRpm > 0,
-      rtc_timestamp_ms: nowMs()
-    });
+    const payload = this.driver.telemetry(nowMs());
+    this.lastTelemetry = payload;
+    const res = await this.api.devicePost('/api/telemetry/motor', this.device.key, payload);
     this.recordPush(res, 'motor');
   }
 
@@ -510,7 +516,7 @@ class MixerNode extends BaseNode {
 
     if (action === 'set_speed') {
       const pct = Number(payload.speed_percent ?? cmd?.speed_percent ?? 0);
-      this.targetRpm = Math.min(BLDC_MAX_RPM, (pct / 100) * BLDC_MAX_RPM);
+      this.driver.setTargetPercent(pct);
       return {};
     }
     return {};
@@ -678,5 +684,5 @@ function buildFleet(api, verbose, options = {}) {
 
 module.exports = {
   buildFleet, BaseNode, SensorNode, ODriveNode, MixerNode, PumpNode,
-  ROLE_ACTIONS, BLDC_MAX_RPM, MIXER_DEFAULT_RPM, PUMP
+  ROLE_ACTIONS, PUMP, T200
 };
