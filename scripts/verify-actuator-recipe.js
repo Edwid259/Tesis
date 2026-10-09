@@ -122,14 +122,23 @@ assert.ok(/REANUDAR/.test(motorPanel), 'Debe existir el botón REANUDAR');
 ok('Existe botón REANUDAR que envía clear_estop');
 
 console.log('\n[Test 8] /api/commands/pending no roba órdenes entre nodos...');
-assert.ok(pendingRoute.includes('function resolveCommandPayload'), 'Debe reconstruir el payload desde error_message');
+// El resolutor vive en una librería compartida porque el orquestador también necesita saber qué
+// acción lleva una orden pendiente, para poder invalidarla cuando el estado del banco cambia.
+const payloadLib = read('src/lib/commandPayload.ts');
+assert.ok(/export function resolveCommandPayload/.test(payloadLib),
+  'La reconstrucción del payload desde error_message debe estar en src/lib/commandPayload.ts');
+assert.ok(payloadLib.includes('error_message'), 'Debe reconstruir el payload desde error_message');
+assert.ok(pendingRoute.includes("from '@/lib/commandPayload'"),
+  'La ruta debe importar el resolutor compartido, no duplicarlo');
+assert.ok(!pendingRoute.includes('function resolveCommandPayload'),
+  'REGRESIÓN: no debe volver a duplicarse la implementación en la ruta');
 assert.ok(/\.is\('device_id', null\)/.test(pendingRoute),
   'El fallback debe limitarse a órdenes globales (sin device_id)');
 assert.ok(pendingRoute.includes('resolveCommandPayload(candidate)'),
   'La clasificación debe usar el payload reconstruido, no row.payload');
 assert.ok(!/candidate\.payload\?\.action\?\.includes/.test(pendingRoute),
   'REGRESIÓN: no debe clasificar leyendo candidate.payload (undefined en producción)');
-ok('El fallback solo sirve órdenes globales; clasificación con payload real');
+ok('El fallback solo sirve órdenes globales; clasificación con payload real y compartido');
 
 console.log('\n[Test 9] /api/experiments despliega la receta por protocolo...');
 assert.ok(expRoute.includes("recipe.mixer === 'on'"), 'Debe derivar la intención del mixer de la receta');

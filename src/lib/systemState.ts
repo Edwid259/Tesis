@@ -167,33 +167,43 @@ export async function getRegisteredExperiment(experimentId: string | null): Prom
  * anulación manual quedaba silenciosamente anulada y el PID volvía a armarse solo. Se detectó en
  * producción con el banco virtual (`manualOverride`): el aireador no bajaba a 0 RPM.
  *
+ * @param cutoffIso Instante en que empezó la transición. Sólo se invalida lo encolado ANTES de ese
+ *   instante: lo que la propia transición acaba de encolar (p. ej. el `start_experiment` del sensor
+ *   en `/api/experiments`) es legítimo y debe llegar. Sin corte se invalida todo lo pendiente.
+ *
  * El filtro es por `action` del payload y no por `command_type`, porque `command_type` no
  * distingue: `clear_estop` viaja como `set_speed`, igual que un `set_state`. Las acciones de
  * seguridad y las dosis ya ordenadas se preservan (ver `commandPayload.ts`).
  */
-export async function supersedePendingOrchestrationCommands(): Promise<number> {
+export async function supersedePendingOrchestrationCommands(cutoffIso?: string): Promise<number> {
   if (!isSupabaseConfigured()) return 0;
   try {
-    const { data, error } = await supabaseAdmin
+    let q = supabaseAdmin
       .from('control_commands')
       .select('id, error_message, status')
-      .eq('status', 'pending')
-      .limit(500);
+      .eq('status', 'pending');
+    if (cutoffIso) q = q.lt('created_at', cutoffIso);
+    const { data, error } = await q.limit(500);
     if (error || !Array.isArray(data)) return 0;
 
     const stale = data.filter(isSupersededByStateChange).map((r: any) => r.id);
     if (stale.length === 0) return 0;
 
-    const { error: updErr } = await supabaseAdmin
-      .from('control_commands')
-      // `expired` es un estado terminal del CHECK de producción: la orden ya no se sirve.
-      .update({ status: 'expired' })
-      .in('id', stale);
-    if (updErr) {
-      console.error('[systemState] No se pudieron invalidar órdenes obsoletas:', updErr.message);
-      return 0;
+    // En lotes: el filtro `in` viaja en la URL y 500 UUIDs la desbordarían.
+    let invalidated = 0;
+    for (let i = 0; i < stale.length; i += 100) {
+      const { error: updErr } = await supabaseAdmin
+        .from('control_commands')
+        // `expired` es un estado terminal del CHECK de producción: la orden ya no se sirve.
+        .update({ status: 'expired' })
+        .in('id', stale.slice(i, i + 100));
+      if (updErr) {
+        console.error('[systemState] No se pudieron invalidar órdenes obsoletas:', updErr.message);
+        return invalidated;
+      }
+      invalidated += Math.min(100, stale.length - i);
     }
-    return stale.length;
+    return invalidated;
   } catch (err: any) {
     console.error('[systemState] Error al invalidar órdenes obsoletas:', err?.message);
     return 0;
@@ -207,11 +217,18 @@ export async function supersedePendingOrchestrationCommands(): Promise<number> {
  * experimentos. Sin ella cada nodo adivinaba: el T-200 encendía el mixer en todo
  * `ACTIVE_EXPERIMENT` y el ODrive no se armaba nunca. En IDLE / MANUAL_OVERRIDE la receta se
  * fuerza a OFF porque una anulación manual debe abortar cualquier automatismo (ADD §2.3).
+ *
+ * @param transitionStartIso Inicio de la transición que provoca esta difusión. Lo encolado antes
+ *   de ese instante deja de valer; lo encolado por la propia transición, no.
  */
-export async function broadcastState(state: SystemState, requested_by: string): Promise<number> {
+export async function broadcastState(
+  state: SystemState,
+  requested_by: string,
+  transitionStartIso?: string
+): Promise<number> {
   // El estado nuevo es autoritativo: lo que quede encolado de un estado anterior deja de valer.
   // Se invalida ANTES de encolar para no cancelar las órdenes recién creadas.
-  await supersedePendingOrchestrationCommands();
+  await supersedePendingOrchestrationCommands(transitionStartIso);
 
   const experiment = await getRegisteredExperiment(state.experiment_id);
   const intent = buildActuatorIntent(state.state, resolveActuatorRecipe(experiment));

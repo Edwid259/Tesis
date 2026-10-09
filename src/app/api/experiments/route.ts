@@ -57,6 +57,9 @@ export async function GET(req: NextRequest) {
  */
 export async function POST(req: NextRequest) {
   try {
+    // Corte temporal de la transición: invalida lo encolado por un estado anterior, pero preserva
+    // lo que este mismo handler encola (p. ej. el `start_experiment` explícito del sensor).
+    const transitionStartIso = new Date().toISOString();
     const body = await req.json();
     const {
       name,
@@ -191,7 +194,7 @@ export async function POST(req: NextRequest) {
       else armed.push('mixer_off');
       if (recipe.motor.mode !== 'off') armed.push('odrive');
 
-      await broadcastState(next, `Orquestador (${case_type})`);
+      await broadcastState(next, `Orquestador (${case_type})`, transitionStartIso);
     } catch (orchErr) {
       console.warn('Advertencia en orquestación de experimento:', orchErr);
     }
@@ -215,6 +218,7 @@ export async function POST(req: NextRequest) {
  */
 export async function PATCH(req: NextRequest) {
   try {
+    const transitionStartIso = new Date().toISOString();
     const body = await req.json();
     const { experiment_id } = body;
 
@@ -233,7 +237,7 @@ export async function PATCH(req: NextRequest) {
         experiment_id: null,
         updated_by: 'Experimento (stop_experiment)'
       });
-      await broadcastState(next, 'Orquestador (stop_experiment)');
+      await broadcastState(next, 'Orquestador (stop_experiment)', transitionStartIso);
     } catch (orchErr) {
       console.warn('Advertencia desarmando actuadores:', orchErr);
     }

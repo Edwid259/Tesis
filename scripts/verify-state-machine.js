@@ -81,10 +81,22 @@ const payloadLib = read('src/lib/commandPayload.ts');
 assert.ok(stateLib.includes('supersedePendingOrchestrationCommands'),
   'broadcastState debe invalidar las órdenes de orquestación obsoletas');
 // La invalidación debe ocurrir ANTES de encolar, o cancelaría las órdenes recién creadas.
-const idxInvalidar = stateLib.indexOf('await supersedePendingOrchestrationCommands()');
+const idxInvalidar = stateLib.indexOf('await supersedePendingOrchestrationCommands(');
 const idxPrimerEnqueue = stateLib.indexOf('await enqueueCommand(', idxInvalidar);
 assert.ok(idxInvalidar > 0 && idxPrimerEnqueue > idxInvalidar,
   'La invalidación debe preceder al encolado del nuevo set_state');
+// El corte temporal evita invalidar la orden que la propia transición acaba de encolar
+// (p. ej. el `start_experiment` del sensor que /api/experiments crea antes de difundir).
+assert.ok(/supersedePendingOrchestrationCommands\(cutoffIso\?: string\)/.test(stateLib),
+  'La invalidación debe aceptar un corte temporal');
+assert.ok(stateLib.includes(".lt('created_at', cutoffIso)"),
+  'Sólo debe invalidar lo encolado antes del inicio de la transición');
+for (const route of [stateRoute, read('src/app/api/experiments/route.ts')]) {
+  const llamadas = (route.match(/broadcastState\(/g) || []).length;
+  const conCorte = (route.match(/broadcastState\([^\n]*transitionStartIso\)/g) || []).length;
+  assert.ok(llamadas > 0 && llamadas === conCorte,
+    `Toda transición debe pasar su corte temporal a broadcastState (${conCorte}/${llamadas})`);
+}
 assert.ok(/status: 'expired'/.test(stateLib), 'Las obsoletas deben quedar en un estado terminal');
 assert.ok(/eq\('status', 'pending'\)/.test(stateLib), 'Solo se invalidan las que aún están pendientes');
 // El filtro va por `action` del payload: `command_type` no distingue (`clear_estop` viaja como `set_speed`).

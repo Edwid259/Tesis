@@ -564,6 +564,14 @@ const SCENARIOS = {
       }).length;
       assertTrue(arranque > 0, 'La receta debió dejar órdenes de arranque encoladas y sin entregar');
 
+      // 1b. La orden que la MISMA transición encoló (el `start_experiment` del sensor) es legítima
+      //     y no debe haberse invalidado: el corte temporal es lo que evita ese daño colateral.
+      const delSensor = (encoladas || []).filter(r => {
+        try { return JSON.parse(r.error_message || '{}').action === 'start_experiment'; } catch { return false; }
+      }).length;
+      assertTrue(delSensor > 0,
+        'El `start_experiment` del sensor debió sobrevivir a la difusión del propio experimento');
+
       // 2. El operador aborta de inmediato, antes de que los nodos consuman toda la cola.
       const res = await api.post('/api/system/state', {
         state: 'MANUAL_OVERRIDE', requested_by: 'Banco virtual (aborto de receta)'
