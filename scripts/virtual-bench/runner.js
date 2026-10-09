@@ -80,10 +80,14 @@ const SCENARIOS = {
       assertTrue(exp.armed.includes('mixer'), `El servidor debe declarar el mixer armado (armed: [${exp.armed.join(', ')}])`);
       assertTrue(!exp.armed.includes('odrive'), `Planta 1 no debe armar el aireador (armed: [${exp.armed.join(', ')}])`);
 
-      // La intención viaja en el `set_state` difundido (vía única para los 4 nodos).
+      // La intención viaja en el `set_state` difundido (vía única para los 4 nodos). Cada nodo
+      // sondea su propia cola, así que hay que esperar a que AMBOS hayan recibido la suya: leer el
+      // payload del ODrive tras esperar sólo al mixer medía una carrera, no el contrato.
       await expectAction(fleet.mixer, 'set_state');
       await waitFor(() => fleet.mixer.lastPayloadOf('set_state')?.mixer !== undefined, 15000,
         'que el mixer reciba su intención');
+      await waitFor(() => fleet.odrive.lastPayloadOf('set_state')?.motor_mode !== undefined, 15000,
+        'que el aireador reciba su intención');
       const mix = fleet.mixer.lastPayloadOf('set_state');
       assertTrue(mix.mixer === 'on', `El mixer debe recibir mixer='on' en Planta 1 (recibió '${mix.mixer}')`);
       assertTrue(fleet.mixer.targetRpm > 0, 'El mixer debe estar girando');

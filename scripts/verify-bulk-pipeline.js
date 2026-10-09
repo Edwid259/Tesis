@@ -79,6 +79,19 @@ assert.ok(!/recorded_at: item\.datetime \|\| new Date\(\)\.toISOString\(\)/.test
   'sensor_readings no debe fabricar la fecha del servidor cuando falta el tiempo del dispositivo');
 ok('No se fabrican timestamps del servidor');
 
+// La vista en vivo guardaba `speed_percent` pero dejaba `rpm` siempre nula (0 de 8701 filas en
+// producción), así que el dashboard tenía que derivar la velocidad de un porcentaje cuantizado a
+// 0.1 % (pasos de 0.6 RPM). Las columnas existen tras la migración 20261008.
+console.log('\n[Test 5] La vista en vivo guarda la RPM real, no solo el porcentaje...');
+assert.ok(/rpm:\s*actual_rpm/.test(motorBulk), 'motor_telemetry debe recibir la RPM real');
+assert.ok(/target_rpm\b/.test(motorBulk), 'motor_telemetry debe recibir la RPM de consigna');
+assert.ok(/PGRST204/.test(motorBulk) && /reintentando sin ellas/.test(motorBulk),
+  'Si el entorno no tiene las columnas, el INSERT debe degradar en vez de perderse entero');
+const history = read('src/app/api/dashboard/history/route.ts');
+assert.ok(/m\.rpm === null \|\| m\.rpm === undefined/.test(history),
+  'La vista debe preferir la RPM almacenada y caer a speed_percent solo si falta');
+ok('La RPM real se persiste y la vista la usa con respaldo para filas antiguas');
+
 console.log('\n====================================================');
-console.log(` TODAS LAS COMPROBACIONES PASARON CORRECTAMENTE (4/4) `);
+console.log(` TODAS LAS COMPROBACIONES PASARON CORRECTAMENTE (5/5) `);
 console.log('====================================================');

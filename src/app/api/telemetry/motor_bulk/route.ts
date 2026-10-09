@@ -88,11 +88,10 @@ export async function POST(req: NextRequest) {
             : (item.rpm !== undefined ? Number(item.rpm) : null);
           const target_rpm = item.target_rpm !== undefined ? Number(item.target_rpm) : null;
 
-          // IMPORTANTE: solo columnas que existen realmente en `motor_telemetry`. Enviar una
-          // columna inexistente hace que PostgREST rechace el INSERT COMPLETO (PGRST204) y el lote
-          // entero se pierde. Ocurría con `rpm`: la tabla no la tiene en producción (aunque
-          // schema.sql la declare), así que ninguna lectura de telemetría llegaba a guardarse.
-          // El dashboard deriva las RPM de `speed_percent` (ver /api/dashboard/history).
+          // `rpm` / `target_rpm` existen en producción tras la migración 20261008 (comprobado con
+          // `db.js audit`) pero podrían faltar en un entorno más antiguo. Enviar una columna
+          // inexistente hace que PostgREST rechace el INSERT COMPLETO (PGRST204) y el lote entero se
+          // pierde: por eso el insert de abajo reintenta sin ellas si hace falta.
           return {
             _epochMs: epochMs,
             device_id: device.id,
@@ -103,7 +102,9 @@ export async function POST(req: NextRequest) {
             voltage_v,
             current_a,
             power_w,
-            status_code
+            status_code,
+            rpm: actual_rpm,
+            target_rpm
           };
         })
         .sort((a, b) => a._epochMs - b._epochMs)
@@ -111,9 +112,15 @@ export async function POST(req: NextRequest) {
         .map(({ _epochMs, ...rest }) => rest);
 
       if (rowsToInsert.length > 0) {
-        const { error: insertError } = await supabaseAdmin
-          .from('motor_telemetry')
-          .insert(rowsToInsert);
+        const insertRows = (rows: typeof rowsToInsert) =>
+          supabaseAdmin.from('motor_telemetry').insert(rows);
+
+        let { error: insertError } = await insertRows(rowsToInsert);
+        if (insertError?.code === 'PGRST204') {
+          console.warn('motor_telemetry sin columnas rpm/target_rpm; reintentando sin ellas');
+          const sinRpm = rowsToInsert.map(({ rpm, target_rpm, ...rest }) => rest);
+          ({ error: insertError } = await insertRows(sinRpm as typeof rowsToInsert));
+        }
 
         if (insertError) {
           // Antes solo se registraba en consola y la ruta devolvía `success: true` igualmente, así

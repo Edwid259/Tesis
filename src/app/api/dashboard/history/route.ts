@@ -111,7 +111,11 @@ export async function GET(req: NextRequest) {
     motorData?.forEach(m => {
       const date = new Date(m.recorded_at);
       const isMotorRunning = Boolean(m.is_on) && Number(m.speed_percent) > 0;
-      const rpmVal = !isMotorRunning ? 0 : Math.round((Number(m.speed_percent) / 100) * 600);
+      // Se prefiere la RPM real almacenada; `speed_percent` viene cuantizado a 0.1 % (pasos de
+      // 0.6 RPM), así que sólo se usa como respaldo de las filas antiguas sin `rpm`.
+      const rpmStored = m.rpm === null || m.rpm === undefined ? null : Number(m.rpm);
+      const rpmVal = !isMotorRunning ? 0
+        : (rpmStored !== null ? Math.round(rpmStored) : Math.round((Number(m.speed_percent) / 100) * 600));
       const existing = historyPoints.find(p => Math.abs(new Date(p.timestamp).getTime() - date.getTime()) < 30000);
       if (existing) {
         existing.motor_speed_percent = isMotorRunning ? Number(m.speed_percent) : 0;
