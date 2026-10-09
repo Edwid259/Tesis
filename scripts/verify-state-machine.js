@@ -78,24 +78,32 @@ assert.ok(bar.includes('MANUAL_OVERRIDE') && bar.includes('ACTIVE_EXPERIMENT'), 
 // silenciosamente sin efecto. Medido en producción con el banco virtual (`manualOverride`).
 console.log('\n[Test 5] El cambio de estado invalida la receta aún encolada...');
 const payloadLib = read('src/lib/commandPayload.ts');
-assert.ok(stateLib.includes('supersedePendingOrchestrationCommands'),
+assert.ok(stateLib.includes('expireCommands'),
   'broadcastState debe invalidar las órdenes de orquestación obsoletas');
-// La invalidación debe ocurrir ANTES de encolar, o cancelaría las órdenes recién creadas.
-const idxInvalidar = stateLib.indexOf('await supersedePendingOrchestrationCommands(');
-const idxPrimerEnqueue = stateLib.indexOf('await enqueueCommand(', idxInvalidar);
-assert.ok(idxInvalidar > 0 && idxPrimerEnqueue > idxInvalidar,
-  'La invalidación debe preceder al encolado del nuevo set_state');
 // El corte temporal evita invalidar la orden que la propia transición acaba de encolar
 // (p. ej. el `start_experiment` del sensor que /api/experiments crea antes de difundir).
-assert.ok(/supersedePendingOrchestrationCommands\(cutoffIso\?: string\)/.test(stateLib),
-  'La invalidación debe aceptar un corte temporal');
-assert.ok(stateLib.includes(".lt('created_at', cutoffIso)"),
-  'Sólo debe invalidar lo encolado antes del inicio de la transición');
+assert.ok(/snapshotPendingOrchestrationIds\(\)/.test(stateLib),
+  'La transición debe capturar por identificador lo que ya estaba encolado');
+// Los identificadores no dependen de ningún reloj: comparar marcas temporales mezcla el reloj de
+// Vercel con el `created_at` de Postgres, y el desfase medido (~160-660 ms) es del mismo orden que
+// la ventana entre encolar y difundir.
+assert.ok(!/lt\('created_at'/.test(stateLib),
+  'REGRESIÓN: no debe decidirse por marcas temporales entre dos relojes distintos');
+assert.ok(/broadcastState\(\s*state: SystemState,\s*requested_by: string,\s*staleCommandIds: string\[\] = \[\]/.test(stateLib),
+  'broadcastState debe recibir la instantánea de identificadores obsoletos');
+assert.ok(stateLib.includes('await expireCommands(staleCommandIds)'), 'Debe expirar exactamente esos ids');
+// Y debe expirar ANTES de encolar: si no, cancelaría las órdenes recién creadas.
+const idxExpirar = stateLib.indexOf('await expireCommands(staleCommandIds)');
+const idxPrimerEnqueue = stateLib.indexOf('await enqueueCommand(', idxExpirar);
+assert.ok(idxExpirar > 0 && idxPrimerEnqueue > idxExpirar,
+  'La invalidación debe preceder al encolado del nuevo set_state');
 for (const route of [stateRoute, read('src/app/api/experiments/route.ts')]) {
   const llamadas = (route.match(/broadcastState\(/g) || []).length;
-  const conCorte = (route.match(/broadcastState\([^\n]*transitionStartIso\)/g) || []).length;
-  assert.ok(llamadas > 0 && llamadas === conCorte,
-    `Toda transición debe pasar su corte temporal a broadcastState (${conCorte}/${llamadas})`);
+  const conInstantanea = (route.match(/broadcastState\([^\n]*staleCommandIds\)/g) || []).length;
+  assert.ok(llamadas > 0 && llamadas === conInstantanea,
+    `Toda transición debe pasar su instantánea a broadcastState (${conInstantanea}/${llamadas})`);
+  assert.ok(/snapshotPendingOrchestrationIds\(\)/.test(route),
+    'Cada transición debe tomar su instantánea al entrar al handler');
 }
 assert.ok(/status: 'expired'/.test(stateLib), 'Las obsoletas deben quedar en un estado terminal');
 assert.ok(/eq\('status', 'pending'\)/.test(stateLib), 'Solo se invalidan las que aún están pendientes');

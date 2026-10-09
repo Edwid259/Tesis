@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { demoExperiments } from '@/lib/demoData';
 import { Experiment } from '@/types';
-import { enqueueCommand, setSystemState, broadcastState, DEVICE_IDS } from '@/lib/systemState';
+import { enqueueCommand, setSystemState, broadcastState, DEVICE_IDS, snapshotPendingOrchestrationIds } from '@/lib/systemState';
 import { resolveActuatorRecipe } from '@/lib/experimentRecipe';
 
 export const dynamic = 'force-dynamic';
@@ -57,9 +57,11 @@ export async function GET(req: NextRequest) {
  */
 export async function POST(req: NextRequest) {
   try {
-    // Corte temporal de la transición: invalida lo encolado por un estado anterior, pero preserva
-    // lo que este mismo handler encola (p. ej. el `start_experiment` explícito del sensor).
-    const transitionStartIso = new Date().toISOString();
+    // Órdenes ya encoladas al empezar la transición. Se capturan por identificador (no por marca
+    // temporal: el desfase de relojes Vercel/Postgres es del mismo orden que la ventana entre
+    // encolar y difundir). Así la difusión invalida lo del estado anterior pero nunca la orden que
+    // este mismo handler acaba de encolar, como el `start_experiment` del sensor.
+    const staleCommandIds = await snapshotPendingOrchestrationIds();
     const body = await req.json();
     const {
       name,
@@ -194,7 +196,7 @@ export async function POST(req: NextRequest) {
       else armed.push('mixer_off');
       if (recipe.motor.mode !== 'off') armed.push('odrive');
 
-      await broadcastState(next, `Orquestador (${case_type})`, transitionStartIso);
+      await broadcastState(next, `Orquestador (${case_type})`, staleCommandIds);
     } catch (orchErr) {
       console.warn('Advertencia en orquestación de experimento:', orchErr);
     }
@@ -218,7 +220,7 @@ export async function POST(req: NextRequest) {
  */
 export async function PATCH(req: NextRequest) {
   try {
-    const transitionStartIso = new Date().toISOString();
+    const staleCommandIds = await snapshotPendingOrchestrationIds();
     const body = await req.json();
     const { experiment_id } = body;
 
@@ -237,7 +239,7 @@ export async function PATCH(req: NextRequest) {
         experiment_id: null,
         updated_by: 'Experimento (stop_experiment)'
       });
-      await broadcastState(next, 'Orquestador (stop_experiment)', transitionStartIso);
+      await broadcastState(next, 'Orquestador (stop_experiment)', staleCommandIds);
     } catch (orchErr) {
       console.warn('Advertencia desarmando actuadores:', orchErr);
     }

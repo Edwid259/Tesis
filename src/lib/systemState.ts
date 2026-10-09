@@ -1,8 +1,7 @@
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
 import { OrchestratorState, SystemState, OverrideFlags, CommandStatus, DeviceRole } from '@/types';
 import { resolveActuatorRecipe, buildActuatorIntent } from '@/lib/experimentRecipe';
-import { isSupersededByStateChange } from '@/lib/commandPayload';
-import {
+import { isSupersededByStateChange } from '@/lib/commandPayload';import {
   DEVICE_ID_BY_ROLE,
   ALL_DEVICE_IDS as ALL_CANONICAL_DEVICE_IDS,
   ROLE_BY_DEVICE_ID
@@ -160,54 +159,59 @@ export async function getRegisteredExperiment(experimentId: string | null): Prom
 }
 
 /**
- * Invalida las órdenes de orquestación que quedaron `pending` de un estado anterior.
+ * Identificadores de las órdenes de orquestación que están pendientes AHORA.
+ *
+ * Se toma al **entrar** al handler de la transición. Comparar marcas temporales no sirve: el corte
+ * lo genera el reloj de Vercel y `created_at` lo pone Postgres, y el desfase medido entre ambos
+ * (~160–660 ms, con Vercel por detrás) es del mismo orden que la ventana entre encolar y difundir.
+ * Con identificadores explícitos la invalidación no depende de ningún reloj.
+ */
+export async function snapshotPendingOrchestrationIds(): Promise<string[]> {
+  if (!isSupabaseConfigured()) return [];
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('control_commands')
+      .select('id, error_message, status')
+      .eq('status', 'pending')
+      .limit(500);
+    if (error || !Array.isArray(data)) return [];
+    return data.filter(isSupersededByStateChange).map((r: any) => r.id);
+  } catch (err: any) {
+    console.error('[systemState] Error al leer la cola de órdenes:', err?.message);
+    return [];
+  }
+}
+
+/**
+ * Marca esas órdenes exactas como `expired` para que `/api/commands/pending` no las sirva.
  *
  * **Por qué existe:** un `set_state` encolado por una receta y aún sin entregar se servía al nodo
  * DESPUÉS del `set_state` de MANUAL_OVERRIDE. Como los nodos aplican lo último que reciben, una
  * anulación manual quedaba silenciosamente anulada y el PID volvía a armarse solo. Se detectó en
  * producción con el banco virtual (`manualOverride`): el aireador no bajaba a 0 RPM.
  *
- * @param cutoffIso Instante en que empezó la transición. Sólo se invalida lo encolado ANTES de ese
- *   instante: lo que la propia transición acaba de encolar (p. ej. el `start_experiment` del sensor
- *   en `/api/experiments`) es legítimo y debe llegar. Sin corte se invalida todo lo pendiente.
- *
  * El filtro es por `action` del payload y no por `command_type`, porque `command_type` no
  * distingue: `clear_estop` viaja como `set_speed`, igual que un `set_state`. Las acciones de
- * seguridad y las dosis ya ordenadas se preservan (ver `commandPayload.ts`).
+ * seguridad y las dosis ya ordenadas nunca llegan a esta lista (ver `commandPayload.ts`).
  */
-export async function supersedePendingOrchestrationCommands(cutoffIso?: string): Promise<number> {
-  if (!isSupabaseConfigured()) return 0;
-  try {
-    let q = supabaseAdmin
+export async function expireCommands(ids: string[]): Promise<number> {
+  if (!isSupabaseConfigured() || ids.length === 0) return 0;
+  // En lotes: el filtro `in` viaja en la URL y cientos de UUID la desbordarían.
+  let invalidated = 0;
+  for (let i = 0; i < ids.length; i += 100) {
+    const lote = ids.slice(i, i + 100);
+    const { error } = await supabaseAdmin
       .from('control_commands')
-      .select('id, error_message, status')
-      .eq('status', 'pending');
-    if (cutoffIso) q = q.lt('created_at', cutoffIso);
-    const { data, error } = await q.limit(500);
-    if (error || !Array.isArray(data)) return 0;
-
-    const stale = data.filter(isSupersededByStateChange).map((r: any) => r.id);
-    if (stale.length === 0) return 0;
-
-    // En lotes: el filtro `in` viaja en la URL y 500 UUIDs la desbordarían.
-    let invalidated = 0;
-    for (let i = 0; i < stale.length; i += 100) {
-      const { error: updErr } = await supabaseAdmin
-        .from('control_commands')
-        // `expired` es un estado terminal del CHECK de producción: la orden ya no se sirve.
-        .update({ status: 'expired' })
-        .in('id', stale.slice(i, i + 100));
-      if (updErr) {
-        console.error('[systemState] No se pudieron invalidar órdenes obsoletas:', updErr.message);
-        return invalidated;
-      }
-      invalidated += Math.min(100, stale.length - i);
+      // `expired` es un estado terminal del CHECK de producción: la orden ya no se sirve.
+      .update({ status: 'expired' })
+      .in('id', lote);
+    if (error) {
+      console.error('[systemState] No se pudieron invalidar órdenes obsoletas:', error.message);
+      return invalidated;
     }
-    return invalidated;
-  } catch (err: any) {
-    console.error('[systemState] Error al invalidar órdenes obsoletas:', err?.message);
-    return 0;
+    invalidated += lote.length;
   }
+  return invalidated;
 }
 
 /**
@@ -218,17 +222,18 @@ export async function supersedePendingOrchestrationCommands(cutoffIso?: string):
  * `ACTIVE_EXPERIMENT` y el ODrive no se armaba nunca. En IDLE / MANUAL_OVERRIDE la receta se
  * fuerza a OFF porque una anulación manual debe abortar cualquier automatismo (ADD §2.3).
  *
- * @param transitionStartIso Inicio de la transición que provoca esta difusión. Lo encolado antes
- *   de ese instante deja de valer; lo encolado por la propia transición, no.
+ * @param staleCommandIds Órdenes que ya estaban pendientes al empezar la transición: el estado
+ *   nuevo las deja obsoletas. Por construcción no incluyen las que esta llamada va a encolar, así
+ *   que la transición nunca cancela sus propias órdenes.
  */
 export async function broadcastState(
   state: SystemState,
   requested_by: string,
-  transitionStartIso?: string
+  staleCommandIds: string[] = []
 ): Promise<number> {
-  // El estado nuevo es autoritativo: lo que quede encolado de un estado anterior deja de valer.
-  // Se invalida ANTES de encolar para no cancelar las órdenes recién creadas.
-  await supersedePendingOrchestrationCommands(transitionStartIso);
+  // El estado nuevo es autoritativo. Se invalida ANTES de encolar para que un nodo que sondee
+  // justo ahora no reciba una orden del estado anterior.
+  await expireCommands(staleCommandIds);
 
   const experiment = await getRegisteredExperiment(state.experiment_id);
   const intent = buildActuatorIntent(state.state, resolveActuatorRecipe(experiment));

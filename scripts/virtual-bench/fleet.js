@@ -52,25 +52,34 @@ class BaseNode {
     this.timers = [];
     this.pollTimers = [];
     this.pollingPaused = false;
+    this.inFlightPoll = null;
     this.stopped = false;
   }
 
   setExperiment(id) { this.experimentId = id; }
 
   start() {
-    this.pollTimers.push(setInterval(() => this.pollCommands(), CADENCE.commandPollMs));
+    this.pollTimers.push(setInterval(() => {
+      // Se guarda el sondeo en vuelo para que `pauseCommandPolling()` pueda esperarlo: el servidor
+      // marca la orden como `sent` al responder, así que una pausa sin esperar no es una pausa.
+      this.inFlightPoll = this.pollCommands().catch(() => {});
+    }, CADENCE.commandPollMs));
   }
 
   /**
-   * Detiene el polling de comandos sin apagar el nodo (los lazos y la telemetría siguen).
+   * Detiene el sondeo de comandos sin apagar el nodo (los lazos y la telemetría siguen).
    * El banco lo usa para reproducir de forma determinista la ventana en la que una orden de
    * receta aún está encolada y el operador aborta: sin esto, los nodos podían consumirla antes
    * del override y la prueba medía una carrera en vez del mecanismo.
+   *
+   * Es `async` a propósito: un sondeo ya lanzado no se puede cancelar, y el servidor marca la
+   * orden como `sent` al responderle. Hay que esperar a que termine para que la pausa sea real.
    */
-  pauseCommandPolling() {
+  async pauseCommandPolling() {
     this.pollingPaused = true;
     for (const t of this.pollTimers) clearInterval(t);
     this.pollTimers = [];
+    if (this.inFlightPoll) await this.inFlightPoll.catch(() => {});
   }
 
   resumeCommandPolling() {

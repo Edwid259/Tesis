@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin, isSupabaseConfigured } from '@/lib/supabase';
-import { getSystemState, setSystemState, broadcastState, normalizeSystemState } from '@/lib/systemState';
+import { getSystemState, setSystemState, broadcastState, normalizeSystemState, snapshotPendingOrchestrationIds } from '@/lib/systemState';
 import { OrchestratorState } from '@/types';
 
 export const dynamic = 'force-dynamic';
@@ -24,10 +24,12 @@ export async function GET() {
  */
 export async function POST(req: NextRequest) {
   try {
-    // Corte temporal: lo encolado antes de este instante pertenece al estado anterior y deja de
-    // valer. Sin él, una orden de receta encolada un instante antes se servía DESPUÉS del override
-    // y volvía a armar el actuador (el aireador no bajaba a 0 RPM al anular manualmente).
-    const transitionStartIso = new Date().toISOString();
+    // Órdenes que ya estaban encoladas al empezar la transición: el estado nuevo las deja
+    // obsoletas. Se capturan por IDENTIFICADOR y no por marca temporal, porque el corte lo
+    // generaría el reloj de Vercel y `created_at` lo pone Postgres (desfase medido ~160-660 ms).
+    // Sin esto, una orden de receta encolada un instante antes se servía DESPUÉS del override y
+    // volvía a armar el actuador: el aireador no bajaba a 0 RPM al anular manualmente.
+    const staleCommandIds = await snapshotPendingOrchestrationIds();
     const body = await req.json().catch(() => ({}));
     const requestedState = body?.state as OrchestratorState;
     if (!VALID_STATES.includes(requestedState)) {
@@ -56,7 +58,7 @@ export async function POST(req: NextRequest) {
     });
 
     // Difundir el nuevo estado a los 4 nodos (sensor, ODrive, mixer, bomba).
-    const queued = await broadcastState(next, requested_by, transitionStartIso);
+    const queued = await broadcastState(next, requested_by, staleCommandIds);
 
     // Bitácora de seguridad: registrar el cambio de estado como evento del banco.
     if (isSupabaseConfigured()) {

@@ -553,74 +553,82 @@ const SCENARIOS = {
     async run({ api, fleet, store, createExperiment, waitFor, sleep, snapshot }) {
       assertTrue(store.available, 'Este escenario necesita credenciales de BD para inspeccionar la cola');
 
-      // 0. Se detiene el polling para que la orden quede encolada con certeza: si no, la prueba
-      //    mediría una carrera entre el consumo del nodo y el override, no el mecanismo.
-      for (const role of NODE_ROLES) fleet[role].pauseCommandPolling();
+      // 0. Se detiene el sondeo para que la orden quede encolada con certeza: si no, la prueba
+      //    mediría una carrera entre el consumo del nodo y el override, no el mecanismo. La pausa
+      //    espera el sondeo en vuelo y luego se vacía la cola, porque un sondeo ya lanzado hace que
+      //    el servidor marque la orden como `sent` al responderle.
+      for (const role of NODE_ROLES) await fleet[role].pauseCommandPolling();
+      for (const role of NODE_ROLES) await fleet[role].drainCommands();
 
-      // 1. Se arma una receta: encola un `set_state` de ACTIVE_EXPERIMENT por nodo.
-      await createExperiment({
-        case_type: 'planta_2_step', plant_target: 'planta_2', controller_type: 'none',
-        parameters: { step_throttle_pct: 60 }
-      });
-      const encoladas = await store.query('control_commands', 'select=id,error_message&status=eq.pending');
-      const arranque = (encoladas || []).filter(r => {
-        try { return JSON.parse(r.error_message || '{}').action === 'set_state'; } catch { return false; }
-      }).length;
-      assertTrue(arranque > 0, 'La receta debió dejar órdenes de arranque encoladas y sin entregar');
+      try {
+        // 1. Se arma una receta: encola un `set_state` de ACTIVE_EXPERIMENT por nodo.
+        await createExperiment({
+          case_type: 'planta_2_step', plant_target: 'planta_2', controller_type: 'none',
+          parameters: { step_throttle_pct: 60 }
+        });
+        const encoladas = await store.query('control_commands', 'select=id,error_message&status=eq.pending');
+        const accionDe = (r) => {
+          try { return JSON.parse(r.error_message || '{}').action; } catch { return null; }
+        };
+        const arranque = (encoladas || []).filter(r => accionDe(r) === 'set_state').length;
+        assertTrue(arranque > 0, 'La receta debió dejar órdenes de arranque encoladas y sin entregar');
 
-      // 1b. La orden que la MISMA transición encoló (el `start_experiment` del sensor) es legítima
-      //     y no debe haberse invalidado: el corte temporal es lo que evita ese daño colateral.
-      const delSensor = (encoladas || []).filter(r => {
-        try { return JSON.parse(r.error_message || '{}').action === 'start_experiment'; } catch { return false; }
-      }).length;
-      assertTrue(delSensor > 0,
-        'El `start_experiment` del sensor debió sobrevivir a la difusión del propio experimento');
+        // 1b. La orden que la MISMA transición encoló (el `start_experiment` del sensor) es legítima
+        //     y no debe haberse invalidado: la instantánea previa es lo que evita ese daño colateral.
+        const delSensor = (encoladas || []).filter(r => accionDe(r) === 'start_experiment').length;
+        assertTrue(delSensor > 0,
+          'El `start_experiment` del sensor debió sobrevivir a la difusión del propio experimento');
 
-      // 2. El operador aborta de inmediato, antes de que los nodos consuman toda la cola.
-      const res = await api.post('/api/system/state', {
-        state: 'MANUAL_OVERRIDE', requested_by: 'Banco virtual (aborto de receta)'
-      });
-      assertTrue(res.ok, `La transición a MANUAL_OVERRIDE falló (HTTP ${res.status})`);
+        // 2. El operador aborta: la cola sigue intacta porque los nodos están pausados.
+        const res = await api.post('/api/system/state', {
+          state: 'MANUAL_OVERRIDE', requested_by: 'Banco virtual (aborto de receta)'
+        });
+        assertTrue(res.ok, `La transición a MANUAL_OVERRIDE falló (HTTP ${res.status})`);
 
-      // 3. Ninguna orden de arranque puede seguir pendiente.
-      await sleep(1000);
-      const pendientes = await store.query('control_commands', 'select=id,error_message&status=eq.pending');
-      assertTrue(pendientes !== null, 'No se pudo leer la cola de órdenes');
-      const rezagadas = pendientes.filter(r => {
-        let p = {};
-        try { p = JSON.parse(r.error_message || '{}'); } catch { /* no es JSON: no es de orquestación */ }
-        return p.action === 'set_state' && p.state === 'ACTIVE_EXPERIMENT';
-      });
-      assertTrue(rezagadas.length === 0,
-        `Quedaron ${rezagadas.length} orden(es) de ACTIVE_EXPERIMENT pendientes: llegarían después del ` +
-        `override y re-armarían el actuador`);
+        // 3. Ninguna orden de arranque puede seguir pendiente.
+        await sleep(1000);
+        const pendientes = await store.query('control_commands', 'select=id,error_message&status=eq.pending');
+        assertTrue(pendientes !== null, 'No se pudo leer la cola de órdenes');
+        const rezagadas = pendientes.filter(r => {
+          let p = {};
+          try { p = JSON.parse(r.error_message || '{}'); } catch { /* no es JSON: no es de orquestación */ }
+          return p.action === 'set_state' && p.state === 'ACTIVE_EXPERIMENT';
+        });
+        assertTrue(rezagadas.length === 0,
+          `Quedaron ${rezagadas.length} orden(es) de ACTIVE_EXPERIMENT pendientes: llegarían después del ` +
+          `override y re-armarían el actuador`);
 
-      // 3b. Y la prueba positiva: las obsoletas fueron EXPIRADAS, no simplemente consumidas.
-      const marca = snapshot?.control_commands;
-      assertTrue(marca, 'Se necesita la marca temporal previa para aislar las filas de esta corrida');
-      const expiradas = await store.query('control_commands',
-        `select=id&status=eq.expired&created_at=gt.${encodeURIComponent(marca)}`);
-      assertTrue(expiradas && expiradas.length >= arranque,
-        `Las ${arranque} órdenes de arranque obsoletas debieron quedar "expired" ` +
-        `(se encontraron ${expiradas ? expiradas.length : 'null'})`);
+        // 3b. Prueba positiva: las obsoletas fueron EXPIRADAS, no simplemente consumidas.
+        const marca = snapshot?.control_commands;
+        assertTrue(marca, 'Se necesita la marca temporal previa para aislar las filas de esta corrida');
+        const expiradas = await store.query('control_commands',
+          `select=id&status=eq.expired&created_at=gt.${encodeURIComponent(marca)}`);
+        assertTrue(expiradas && expiradas.length >= arranque + delSensor,
+          `Las ${arranque + delSensor} órdenes obsoletas debieron quedar "expired" ` +
+          `(se encontraron ${expiradas ? expiradas.length : 'null'})`);
 
-      // 4. Se reanuda el polling: los nodos deben quedarse en el estado de anulación, sin que una
-      //    orden rezagada los re-arme.
-      for (const role of NODE_ROLES) fleet[role].resumeCommandPolling();
-      await waitFor(() => fleet.odrive.lastPayloadOf('set_state')?.state === 'MANUAL_OVERRIDE', 20000,
-        'que el aireador reciba el estado de anulación');
-      await sleep(2500); // margen para que llegue cualquier orden rezagada (ya no debe haber)
-      assertTrue(fleet.odrive.lastPayloadOf('set_state')?.state === 'MANUAL_OVERRIDE',
-        'El aireador no debe recibir ninguna orden de arranque después del override');
-      await waitFor(() => fleet.odrive.loopState().targetRpm === 0, 8000,
-        `que el aireador quede a 0 RPM (actual: ${fleet.odrive.loopState().targetRpm})`);
-      assertTrue(fleet.mixer.targetRpm === 0, 'El mixer no debe arrancar tras el override');
+        // 4. Se reanuda el sondeo: los nodos deben quedarse en el estado de anulación, sin que una
+        //    orden rezagada los re-arme.
+        for (const role of NODE_ROLES) fleet[role].resumeCommandPolling();
+        await waitFor(() => fleet.odrive.lastPayloadOf('set_state')?.state === 'MANUAL_OVERRIDE', 20000,
+          'que el aireador reciba el estado de anulación');
+        await sleep(2500); // margen para cualquier orden rezagada (ya no debe haber ninguna)
+        assertTrue(fleet.odrive.lastPayloadOf('set_state')?.state === 'MANUAL_OVERRIDE',
+          'El aireador no debe recibir ninguna orden de arranque después del override');
+        await waitFor(() => fleet.odrive.loopState().targetRpm === 0, 8000,
+          `que el aireador quede a 0 RPM (actual: ${fleet.odrive.loopState().targetRpm})`);
+        assertTrue(fleet.mixer.targetRpm === 0, 'El mixer no debe arrancar tras el override');
 
-      return [
-        `${arranque} orden(es) de arranque encoladas antes de abortar`,
-        `${expiradas.length} invalidada(s) como "expired" tras el override`,
-        'el aireador quedó a 0 RPM y no se re-armó'
-      ];
+        return [
+          `${arranque} orden(es) de arranque encoladas antes de abortar`,
+          `${expiradas.length} invalidada(s) como "expired" tras el override`,
+          'el aireador quedó a 0 RPM y no se re-armó'
+        ];
+      } finally {
+        // Pase lo que pase, los nodos vuelven a sondear: dejarlos pausados tumbaría el resto de la
+        // corrida (así se propagó un solo fallo a los cuatro escenarios siguientes).
+        for (const role of NODE_ROLES) fleet[role].resumeCommandPolling();
+      }
     }
   },
   /** E-Stop y su liberación explícita: antes no había forma de salir del latch. */
