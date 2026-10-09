@@ -83,19 +83,22 @@ assert.ok(motorBulk.includes('archiveRolePayload'), 'motor_bulk debe archivar po
 assert.ok(!motorBulk.includes(".from('odrive_telemetry_bulk')"), 'REGRESIÓN: no debe archivar todo en odrive_telemetry_bulk');
 ok('Archivado por rol con aviso accionable una sola vez');
 
-console.log('\n[Test 5] Ningún INSERT envía la columna inexistente rpm...');
-// `motor_telemetry` no tiene la columna `rpm` en producción; enviarla hace fallar TODO el INSERT.
-assert.ok(!/^\s*rpm:/m.test(motorBulk), 'REGRESIÓN: motor_bulk no debe enviar la columna rpm');
-assert.ok(!/^\s*rpm:/m.test(motorSingle), 'REGRESIÓN: motor (single) no debe enviar la columna rpm');
-// Tampoco se puede PEDIR en un SELECT: la consulta falla entera y devuelve vacío.
-assert.ok(!/MOTOR_CSV_COLUMNS = '[^']*rpm/.test(downloadRoute),
-  'REGRESIÓN: el respaldo no debe seleccionar la columna rpm inexistente');
-assert.ok(motorBulk.includes('warning: ingestWarning'), 'motor_bulk debe reportar el fallo de ingesta');
-assert.ok(motorBulk.includes('ingested: ingestedRows'), 'motor_bulk debe reportar las filas almacenadas');
-// La migración alinea el esquema declarado con producción.
+console.log('\n[Test 5] `rpm` existe ya en producción y se persiste con degradación segura...');
+// La migración 20261008 añadió la columna, y `db.js audit` la confirma desplegada.
 assert.ok(/ALTER TABLE public.motor_telemetry ADD COLUMN IF NOT EXISTS rpm/.test(migration),
   'La migración debe añadir la columna rpm que schema.sql declara');
-ok('Sin columnas inexistentes + ingesta reportada + esquema convergente');
+// El defecto original fue enviar la columna cuando NO existía: PostgREST rechazaba el INSERT entero
+// (PGRST204) y la telemetría del aireador no se guardaba nunca. Ahora que existe se envía, y si un
+// despliegue contra un esquema viejo la rechaza se reintenta sin ella en vez de perder el lote.
+assert.ok(/rpm:\s*actual_rpm/.test(motorBulk), 'motor_bulk debe persistir la RPM real');
+assert.ok(motorBulk.includes('PGRST204') && /reintentando sin ellas/.test(motorBulk),
+  'Un entorno sin la columna debe degradar, no perder el lote entero');
+assert.ok(motorBulk.includes('warning: ingestWarning'), 'motor_bulk debe reportar el fallo de ingesta');
+assert.ok(motorBulk.includes('ingested: ingestedRows'), 'motor_bulk debe reportar las filas almacenadas');
+// Un SELECT contra una columna inexistente también falla entero (42703) y devuelve vacío.
+assert.ok(!/MOTOR_CSV_COLUMNS = '[^']*rpm/.test(downloadRoute),
+  'REGRESIÓN: el respaldo legacy no debe seleccionar columnas que producción no tenía');
+ok('Columna rpm persistida con degradación segura + ingesta reportada + esquema convergente');
 
 console.log('\n[Test 6] Descarga CSV con respaldo legacy (nunca vacía)...');
 assert.ok(downloadRoute.includes('fetchLegacyWindow'), 'La descarga debe tener respaldo legacy');
