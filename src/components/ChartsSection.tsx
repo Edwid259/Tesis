@@ -5,23 +5,36 @@ import {
   ResponsiveContainer,
   AreaChart,
   Area,
-  LineChart,
   Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   Legend,
-  ReferenceLine
+  ReferenceLine,
+  ReferenceArea,
+  Brush
 } from 'recharts';
 import { HistoryDataPoint, SystemThresholds, Experiment } from '@/types';
-import { LineChart as ChartIcon, Eye, EyeOff, Calendar, FlaskConical, Download } from 'lucide-react';
+import {
+  LineChart as ChartIcon,
+  Eye,
+  EyeOff,
+  Calendar,
+  FlaskConical,
+  Download,
+  MoveHorizontal,
+  RotateCcw,
+  Check,
+  Clock
+} from 'lucide-react';
 
 interface ChartsSectionProps {
   history: HistoryDataPoint[];
   thresholds: SystemThresholds;
   selectedRange: string;
-  onRangeChange: (range: string) => void;
+  customRange?: { start: string; end: string } | null;
+  onRangeChange: (range: string, customDates?: { start: string; end: string }) => void;
   isLoading: boolean;
   activeExperiment?: Experiment | null;
 }
@@ -34,10 +47,16 @@ interface PerturbationMarker {
   created_at: string;
 }
 
+const toLocalInputFormat = (d: Date) => {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
 export const ChartsSection: React.FC<ChartsSectionProps> = ({
   history,
   thresholds,
   selectedRange,
+  customRange,
   onRangeChange,
   isLoading,
   activeExperiment
@@ -46,6 +65,22 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
   const [showDO, setShowDO] = useState<boolean>(true);
   const [showSpeed, setShowSpeed] = useState<boolean>(true);
   const [showTemp, setShowTemp] = useState<boolean>(true);
+
+  // Selector de intervalo exacto personalizado
+  const [showCustomPicker, setShowCustomPicker] = useState<boolean>(selectedRange === 'custom');
+  const [customStart, setCustomStart] = useState<string>(() => {
+    if (customRange?.start) return toLocalInputFormat(new Date(customRange.start));
+    return toLocalInputFormat(new Date(Date.now() - 6 * 3600 * 1000));
+  });
+  const [customEnd, setCustomEnd] = useState<string>(() => {
+    if (customRange?.end) return toLocalInputFormat(new Date(customRange.end));
+    return toLocalInputFormat(new Date());
+  });
+
+  // Estado de navegación temporal interactiva (Brush) y zoom con cursor
+  const [brushIndices, setBrushIndices] = useState<{ startIndex?: number; endIndex?: number }>({});
+  const [refAreaLeft, setRefAreaLeft] = useState<string | null>(null);
+  const [refAreaRight, setRefAreaRight] = useState<string | null>(null);
 
   // Filtrar estrictamente los datos para la gráfica del experimento
   // Comienza limpio desde activeExperiment.started_at (t = 0)
@@ -62,6 +97,9 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
     });
   }, [history, activeExperiment]);
 
+  // Dataset activo según la pestaña seleccionada
+  const activeDataset = activeTab === 'experiment' ? experimentData : history;
+
   // Auto-transición a vista de experimento cuando se inicia uno nuevo
   useEffect(() => {
     if (activeExperiment && activeExperiment.status === 'active') {
@@ -69,8 +107,21 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
     }
   }, [activeExperiment?.id, activeExperiment?.status]);
 
-  // V4: perturbaciones físicas con instante exacto de ejecución (ACK rtc_timestamp_ms),
-  // usadas para marcar en la gráfica el milisegundo real de la inyección sin latencia de red.
+  // Restablecer navegación interna al cambiar de pestaña o de rango
+  useEffect(() => {
+    setBrushIndices({});
+    setRefAreaLeft(null);
+    setRefAreaRight(null);
+  }, [activeTab, selectedRange]);
+
+  // Sincronizar apertura de picker si selectedRange es custom
+  useEffect(() => {
+    if (selectedRange === 'custom') {
+      setShowCustomPicker(true);
+    }
+  }, [selectedRange]);
+
+  // V4: perturbaciones físicas con instante exacto de ejecución (ACK rtc_timestamp_ms)
   const [perturbations, setPerturbations] = useState<PerturbationMarker[]>([]);
 
   useEffect(() => {
@@ -107,16 +158,100 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
         }
         return { id: p.id, label: best.timeLabel, action: p.action, diffMs: bestDiff };
       })
-      // Solo se dibuja si la muestra más cercana está a <= 15 s de la perturbación real.
       .filter(m => m.diffMs <= 15000)
       .slice(0, 5);
   }, [perturbations, experimentData]);
 
   const ranges = [
-    { label: 'Última Hora', value: '1h' },
+    { label: '1 Hora', value: '1h' },
+    { label: '6 Horas', value: '6h' },
     { label: '24 Horas', value: '24h' },
-    { label: '7 Días', value: '7d' }
+    { label: '7 Días', value: '7d' },
+    { label: 'Personalizado', value: 'custom' }
   ];
+
+  // Manejo de cambio de rango y selector personalizado
+  const handleRangeButtonClick = (rangeVal: string) => {
+    if (rangeVal === 'custom') {
+      setShowCustomPicker(prev => !prev);
+      if (selectedRange !== 'custom') {
+        const startIso = new Date(customStart).toISOString();
+        const endIso = new Date(customEnd).toISOString();
+        onRangeChange('custom', { start: startIso, end: endIso });
+      }
+    } else {
+      setShowCustomPicker(false);
+      onRangeChange(rangeVal);
+    }
+  };
+
+  const handleApplyCustomRange = () => {
+    if (!customStart || !customEnd) return;
+    const startIso = new Date(customStart).toISOString();
+    const endIso = new Date(customEnd).toISOString();
+    onRangeChange('custom', { start: startIso, end: endIso });
+  };
+
+  const handleQuickPreset = (hours: number) => {
+    const end = new Date();
+    const start = new Date(end.getTime() - hours * 3600 * 1000);
+    const startStr = toLocalInputFormat(start);
+    const endStr = toLocalInputFormat(end);
+    setCustomStart(startStr);
+    setCustomEnd(endStr);
+    setShowCustomPicker(true);
+    onRangeChange('custom', { start: start.toISOString(), end: end.toISOString() });
+  };
+
+  // Navegación con cursor y Brush
+  const handleBrushChange = (newRange: any) => {
+    if (newRange && typeof newRange.startIndex === 'number' && typeof newRange.endIndex === 'number') {
+      setBrushIndices({ startIndex: newRange.startIndex, endIndex: newRange.endIndex });
+    }
+  };
+
+  const handleMouseDown = (e: any) => {
+    if (e && e.activeLabel) {
+      setRefAreaLeft(e.activeLabel);
+      setRefAreaRight(null);
+    }
+  };
+
+  const handleMouseMove = (e: any) => {
+    if (refAreaLeft && e && e.activeLabel) {
+      setRefAreaRight(e.activeLabel);
+    }
+  };
+
+  const handleMouseUp = () => {
+    if (!refAreaLeft || !refAreaRight || refAreaLeft === refAreaRight) {
+      setRefAreaLeft(null);
+      setRefAreaRight(null);
+      return;
+    }
+    const idx1 = activeDataset.findIndex(p => p.timeLabel === refAreaLeft);
+    const idx2 = activeDataset.findIndex(p => p.timeLabel === refAreaRight);
+    if (idx1 !== -1 && idx2 !== -1) {
+      const start = Math.min(idx1, idx2);
+      const end = Math.max(idx1, idx2);
+      if (end - start >= 1) {
+        setBrushIndices({ startIndex: start, endIndex: end });
+      }
+    }
+    setRefAreaLeft(null);
+    setRefAreaRight(null);
+  };
+
+  const handleResetNavigation = () => {
+    setBrushIndices({ startIndex: 0, endIndex: Math.max(0, activeDataset.length - 1) });
+    setRefAreaLeft(null);
+    setRefAreaRight(null);
+  };
+
+  const isNavigatedOrZoomed = useMemo(() => {
+    if (brushIndices.startIndex === undefined || brushIndices.endIndex === undefined) return false;
+    return brushIndices.startIndex > 0 || brushIndices.endIndex < activeDataset.length - 1;
+  }, [brushIndices, activeDataset.length]);
 
   // Custom Tooltip estilizado
   const CustomTooltip = ({ active, payload, label }: any) => {
@@ -208,20 +343,84 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
             {ranges.map((r) => (
               <button
                 key={r.value}
-                onClick={() => onRangeChange(r.value)}
+                onClick={() => handleRangeButtonClick(r.value)}
                 disabled={isLoading}
-                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
                   selectedRange === r.value
-                    ? 'bg-slate-700 text-cyan-300 font-semibold'
+                    ? 'bg-slate-700 text-cyan-300 font-semibold shadow-inner'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                {r.label}
+                {r.value === 'custom' && <Calendar className="w-3 h-3 text-cyan-400" />}
+                <span>{r.label}</span>
               </button>
             ))}
           </div>
         </div>
       </div>
+
+      {/* Selector Desplegable de Intervalo Exacto Personalizado */}
+      {showCustomPicker && (
+        <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-900/90 border border-cyan-800/40 text-xs shadow-lg animate-in fade-in duration-150">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-1.5 text-cyan-300 font-semibold">
+              <Calendar className="w-4 h-4 text-cyan-400" />
+              <span>Intervalo Exacto:</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-slate-400 text-[11px]">Inicio:</span>
+              <input
+                type="datetime-local"
+                value={customStart}
+                onChange={(e) => setCustomStart(e.target.value)}
+                className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-slate-100 text-xs focus:outline-none focus:border-cyan-500 font-mono"
+              />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-slate-400 text-[11px]">Fin:</span>
+              <input
+                type="datetime-local"
+                value={customEnd}
+                onChange={(e) => setCustomEnd(e.target.value)}
+                className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-slate-100 text-xs focus:outline-none focus:border-cyan-500 font-mono"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleApplyCustomRange}
+              disabled={isLoading || !customStart || !customEnd}
+              className="flex items-center gap-1 px-3 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold transition-all shadow-md shadow-cyan-900/40 disabled:opacity-50"
+            >
+              <Check className="w-3.5 h-3.5" />
+              <span>{isLoading ? 'Cargando...' : 'Aplicar'}</span>
+            </button>
+          </div>
+          <div className="flex items-center gap-1.5 text-[11px]">
+            <span className="text-slate-500 hidden sm:inline">Atajos:</span>
+            <button
+              type="button"
+              onClick={() => handleQuickPreset(2)}
+              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+            >
+              Últimas 2h
+            </button>
+            <button
+              type="button"
+              onClick={() => handleQuickPreset(6)}
+              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+            >
+              Últimas 6h
+            </button>
+            <button
+              type="button"
+              onClick={() => handleQuickPreset(12)}
+              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+            >
+              Últimas 12h
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Toggles de Series para la Gráfica Combinada */}
       {activeTab === 'combined' && (
@@ -294,8 +493,40 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
         </div>
       )}
 
+      {/* Barra de Información de Navegación y Zoom con Cursor */}
+      {activeDataset.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between text-xs gap-2 px-1 text-slate-400">
+          <div className="flex items-center gap-1.5 text-[11px]">
+            <MoveHorizontal className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+            <span>
+              <strong className="text-slate-300 font-medium">Navegación con cursor:</strong> arrastra la barra inferior para moverte en el tiempo (pan), o haz clic y arrastra sobre la gráfica para seleccionar un intervalo.
+            </span>
+          </div>
+
+          {isNavigatedOrZoomed && (
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-cyan-300 font-mono bg-cyan-950/80 border border-cyan-800/80 px-2 py-0.5 rounded-md flex items-center gap-1.5 shadow-sm">
+                <Clock className="w-3 h-3 text-cyan-400" />
+                <span>
+                  Ventana: {activeDataset[brushIndices.startIndex || 0]?.timeLabel} → {activeDataset[brushIndices.endIndex ?? (activeDataset.length - 1)]?.timeLabel} ({((brushIndices.endIndex ?? (activeDataset.length - 1)) - (brushIndices.startIndex || 0) + 1)} pts)
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={handleResetNavigation}
+                className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] transition-colors border border-slate-700 shadow-sm"
+                title="Restablecer vista a rango completo"
+              >
+                <RotateCcw className="w-3 h-3 text-cyan-400" />
+                <span>Restablecer</span>
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Contenedor de la Gráfica */}
-      <div className="h-[340px] w-full pt-2">
+      <div className="h-[400px] w-full pt-1">
         {activeTab === 'experiment' && experimentData.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-3">
             <div className="p-3.5 rounded-2xl bg-emerald-950/50 border border-emerald-800/80 text-emerald-400 shadow-xl shadow-emerald-950/40">
@@ -321,7 +552,14 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
           <ResponsiveContainer width="100%" height="100%">
             {activeTab === 'combined' ? (
               // 1. GRÁFICA COMBINADA: Doble Eje Y (OD mg/L y Velocidad %)
-              <AreaChart data={history} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+              <AreaChart
+                data={history}
+                margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={() => { setRefAreaLeft(null); setRefAreaRight(null); }}
+              >
                 <defs>
                   <linearGradient id="colorDO" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.4} />
@@ -409,10 +647,43 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                     dot={false}
                   />
                 )}
+
+                {/* Área de selección interactiva con el cursor */}
+                {refAreaLeft && refAreaRight && (
+                  <ReferenceArea
+                    yAxisId="left"
+                    x1={refAreaLeft}
+                    x2={refAreaRight}
+                    stroke="#06b6d4"
+                    strokeOpacity={0.8}
+                    fill="#06b6d4"
+                    fillOpacity={0.25}
+                  />
+                )}
+
+                {/* Barra de Navegación Temporal (Brush): permite desplazarse (pan) con el cursor */}
+                <Brush
+                  dataKey="timeLabel"
+                  height={28}
+                  stroke="#0891b2"
+                  fill="#0b132b"
+                  travellerWidth={8}
+                  startIndex={brushIndices.startIndex}
+                  endIndex={brushIndices.endIndex}
+                  onChange={handleBrushChange}
+                  tickFormatter={(t) => t}
+                />
               </AreaChart>
             ) : activeTab === 'do' ? (
               // 2. GRÁFICA DE OXÍGENO DISUELTO CON LÍNEAS DE UMBRAL
-              <AreaChart data={history} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+              <AreaChart
+                data={history}
+                margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={() => { setRefAreaLeft(null); setRefAreaRight(null); }}
+              >
                 <defs>
                   <linearGradient id="colorDOOnly" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.5} />
@@ -450,10 +721,42 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                   fillOpacity={1}
                   fill="url(#colorDOOnly)"
                 />
+
+                {/* Área de selección interactiva */}
+                {refAreaLeft && refAreaRight && (
+                  <ReferenceArea
+                    x1={refAreaLeft}
+                    x2={refAreaRight}
+                    stroke="#06b6d4"
+                    strokeOpacity={0.8}
+                    fill="#06b6d4"
+                    fillOpacity={0.25}
+                  />
+                )}
+
+                {/* Barra de Navegación Temporal */}
+                <Brush
+                  dataKey="timeLabel"
+                  height={28}
+                  stroke="#0891b2"
+                  fill="#0b132b"
+                  travellerWidth={8}
+                  startIndex={brushIndices.startIndex}
+                  endIndex={brushIndices.endIndex}
+                  onChange={handleBrushChange}
+                  tickFormatter={(t) => t}
+                />
               </AreaChart>
             ) : activeTab === 'experiment' ? (
               // 3. GRÁFICA EN VIVO DEL EXPERIMENTO (Solo lecturas del experimento actual)
-              <AreaChart data={experimentData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+              <AreaChart
+                data={experimentData}
+                margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={() => { setRefAreaLeft(null); setRefAreaRight(null); }}
+              >
                 <defs>
                   <linearGradient id="colorExpDO" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#10b981" stopOpacity={0.6} />
@@ -510,7 +813,7 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                   activeDot={{ r: 5, fill: '#14b8a6', stroke: '#ffffff', strokeWidth: 2 }}
                 />
 
-                {/* V4: marcadores de perturbación (dosis/bomba/mixer/escalón) al instante exacto de ejecución */}
+                {/* V4: marcadores de perturbación */}
                 {perturbationMarkers.map((marker) => (
                   <ReferenceLine
                     key={marker.id}
@@ -522,10 +825,43 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                     label={{ value: marker.action, fill: '#f59e0b', fontSize: 9, angle: -90, position: 'insideTopLeft' }}
                   />
                 ))}
+
+                {/* Área de selección interactiva */}
+                {refAreaLeft && refAreaRight && (
+                  <ReferenceArea
+                    yAxisId="left"
+                    x1={refAreaLeft}
+                    x2={refAreaRight}
+                    stroke="#10b981"
+                    strokeOpacity={0.8}
+                    fill="#10b981"
+                    fillOpacity={0.25}
+                  />
+                )}
+
+                {/* Barra de Navegación Temporal */}
+                <Brush
+                  dataKey="timeLabel"
+                  height={28}
+                  stroke="#10b981"
+                  fill="#062e24"
+                  travellerWidth={8}
+                  startIndex={brushIndices.startIndex}
+                  endIndex={brushIndices.endIndex}
+                  onChange={handleBrushChange}
+                  tickFormatter={(t) => t}
+                />
               </AreaChart>
             ) : (
               // 4. GRÁFICA DE VELOCIDAD DE AIREADOR ODRIVE S1 (M8325s) EN RPM
-              <AreaChart data={history} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+              <AreaChart
+                data={history}
+                margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={() => { setRefAreaLeft(null); setRefAreaRight(null); }}
+              >
                 <defs>
                   <linearGradient id="colorMotorOnly" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.6} />
@@ -546,6 +882,31 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                   strokeWidth={2.5}
                   fillOpacity={1}
                   fill="url(#colorMotorOnly)"
+                />
+
+                {/* Área de selección interactiva */}
+                {refAreaLeft && refAreaRight && (
+                  <ReferenceArea
+                    x1={refAreaLeft}
+                    x2={refAreaRight}
+                    stroke="#3b82f6"
+                    strokeOpacity={0.8}
+                    fill="#3b82f6"
+                    fillOpacity={0.25}
+                  />
+                )}
+
+                {/* Barra de Navegación Temporal */}
+                <Brush
+                  dataKey="timeLabel"
+                  height={28}
+                  stroke="#3b82f6"
+                  fill="#0b1739"
+                  travellerWidth={8}
+                  startIndex={brushIndices.startIndex}
+                  endIndex={brushIndices.endIndex}
+                  onChange={handleBrushChange}
+                  tickFormatter={(t) => t}
                 />
               </AreaChart>
             )}

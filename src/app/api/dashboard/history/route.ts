@@ -20,13 +20,23 @@ export async function GET(req: NextRequest) {
   try {
     let hours = 24;
     if (range === '1h') hours = 1;
+    else if (range === '6h') hours = 6;
+    else if (range === '12h') hours = 12;
     else if (range === '24h') hours = 24;
     else if (range === '7d') hours = 24 * 7;
+    else if (startDateParam && endDateParam) {
+      const diffMs = new Date(endDateParam).getTime() - new Date(startDateParam).getTime();
+      hours = Math.max(0.1, diffMs / (1000 * 60 * 60));
+    }
 
-    const formatLabel = (date: Date) => (range === '7d' ? formatPeruDateTime(date) : formatPeruTime(date));
+    const isMultiDay = hours > 24 || range === '7d';
+    const isSubHour = hours <= 1 || range === '1h';
+    const formatLabel = (date: Date) => (isMultiDay ? formatPeruDateTime(date) : formatPeruTime(date, isSubHour));
 
     if (!isSupabaseConfigured()) {
-      const demoData = generateDemoHistory(hours);
+      const startD = startDateParam ? new Date(startDateParam) : undefined;
+      const endD = endDateParam ? new Date(endDateParam) : undefined;
+      const demoData = generateDemoHistory(hours, startD, endD);
       return NextResponse.json({
         success: true,
         range,

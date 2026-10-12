@@ -54,6 +54,7 @@ export default function DashboardPage() {
   const [events, setEvents] = useState<MotorEvent[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [selectedRange, setSelectedRange] = useState<string>('24h');
+  const [customRange, setCustomRange] = useState<{ start: string; end: string } | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [lastUpdated, setLastUpdated] = useState<string>('Recién cargado');
   const [activeExperiment, setActiveExperiment] = useState<Experiment | null>(null);
@@ -74,7 +75,11 @@ export default function DashboardPage() {
       }
 
       // 2. Obtener Historial de Gráficas
-      const historyRes = await fetch(`/api/dashboard/history?range=${selectedRange}`, { cache: 'no-store' });
+      let historyUrl = `/api/dashboard/history?range=${selectedRange}`;
+      if (selectedRange === 'custom' && customRange?.start && customRange?.end) {
+        historyUrl += `&startDate=${encodeURIComponent(customRange.start)}&endDate=${encodeURIComponent(customRange.end)}`;
+      }
+      const historyRes = await fetch(historyUrl, { cache: 'no-store' });
       if (historyRes.ok) {
         const historyData = await historyRes.json();
         setHistory(historyData.data || []);
@@ -104,7 +109,7 @@ export default function DashboardPage() {
     } finally {
       if (!isBackground) setIsLoading(false);
     }
-  }, [selectedRange, history.length]);
+  }, [selectedRange, customRange, history.length]);
 
   // Carga inicial y actualización periódica (acelerada a 4s durante experimento activo, 15s en reposo)
   useEffect(() => {
@@ -295,7 +300,15 @@ export default function DashboardPage() {
             history={history}
             thresholds={summary.thresholds}
             selectedRange={selectedRange}
-            onRangeChange={(range) => setSelectedRange(range)}
+            customRange={customRange}
+            onRangeChange={(range, customDates) => {
+              setSelectedRange(range);
+              if (customDates) {
+                setCustomRange(customDates);
+              } else if (range !== 'custom') {
+                setCustomRange(null);
+              }
+            }}
             isLoading={isLoading}
             activeExperiment={activeExperiment}
           />

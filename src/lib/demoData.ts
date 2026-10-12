@@ -111,14 +111,28 @@ export function getDemoLatestEscTelemetry(): MotorTelemetry {
   };
 }
 
-export function generateDemoHistory(hours: number = 24): HistoryDataPoint[] {
+export function generateDemoHistory(
+  hours: number = 24,
+  startDate?: Date,
+  endDate?: Date
+): HistoryDataPoint[] {
   const points: HistoryDataPoint[] = [];
-  const now = new Date();
-  const stepMinutes = hours <= 1 ? 2 : hours <= 24 ? 30 : 180;
-  const totalPoints = Math.floor((hours * 60) / stepMinutes);
+  const end = endDate && !isNaN(endDate.getTime()) ? endDate : new Date();
+  const start = startDate && !isNaN(startDate.getTime())
+    ? startDate
+    : new Date(end.getTime() - hours * 60 * 60 * 1000);
 
-  for (let i = totalPoints; i >= 0; i--) {
-    const time = new Date(now.getTime() - i * stepMinutes * 60 * 1000);
+  const diffMs = Math.max(60 * 1000, end.getTime() - start.getTime());
+  const diffHours = diffMs / (1000 * 60 * 60);
+
+  const stepMinutes = diffHours <= 1 ? 2 : diffHours <= 6 ? 10 : diffHours <= 24 ? 30 : 180;
+  const totalPoints = Math.max(4, Math.floor((diffHours * 60) / stepMinutes));
+  const stepMs = diffMs / totalPoints;
+  const isMultiDay = diffHours > 24;
+  const isSubHour = diffHours <= 1;
+
+  for (let i = 0; i <= totalPoints; i++) {
+    const time = new Date(start.getTime() + i * stepMs);
     // Ciclo diurno simulado para OD y temperatura
     const hourOfDay = time.getHours() + time.getMinutes() / 60;
     const diurnalFactor = Math.sin(((hourOfDay - 6) / 24) * 2 * Math.PI); // Pico en la tarde, bajo en la madrugada
@@ -133,9 +147,19 @@ export function generateDemoHistory(hours: number = 24): HistoryDataPoint[] {
     const formattedTemp = Number((22.5 + diurnalFactor * 1.8 + (Math.random() * 0.1)).toFixed(2));
     const formattedSat = Number((formattedDO * 12.5).toFixed(1));
 
+    const timeLabel = isMultiDay
+      ? `${time.toLocaleDateString('es-PE', { timeZone: 'America/Lima', day: '2-digit', month: '2-digit' })} ${time.toLocaleTimeString('es-PE', { timeZone: 'America/Lima', hour: '2-digit', minute: '2-digit', hour12: false })}`
+      : time.toLocaleTimeString('es-PE', {
+          timeZone: 'America/Lima',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: isSubHour ? '2-digit' : undefined,
+          hour12: false
+        });
+
     points.push({
       timestamp: time.toISOString(),
-      timeLabel: time.toLocaleTimeString('es-PE', { timeZone: 'America/Lima', hour: '2-digit', minute: '2-digit', hour12: false }),
+      timeLabel,
       dissolved_oxygen_mg_l: formattedDO,
       oxygen_saturation_pct: formattedSat,
       water_temperature_c: formattedTemp,

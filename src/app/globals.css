@@ -47,3 +47,21 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #0284c7;
 }
+
+/* Recharts Brush Navigator Styling */
+.recharts-brush-slide {
+  fill: #06b6d4 !important;
+  fill-opacity: 0.2 !important;
+  cursor: grab !important;
+}
+.recharts-brush-slide:active {
+  cursor: grabbing !important;
+}
+.recharts-brush-traveller rect {
+  fill: #0891b2 !important;
+  cursor: ew-resize !important;
+}
+.recharts-brush-texts text {
+  fill: #94a3b8 !important;
+  font-size: 10px !important;
+}
