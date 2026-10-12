@@ -24,20 +24,20 @@ const rootEnv = getRootEnv();
 const rawSupabaseUrl =
   (process.env.NEXT_PUBLIC_SUPABASE_URL && !process.env.NEXT_PUBLIC_SUPABASE_URL.includes('placeholder')
     ? process.env.NEXT_PUBLIC_SUPABASE_URL
-    : rootEnv.SUPABASE_URL) || 'https://placeholder.supabase.co';
+    : process.env.SUPABASE_URL || rootEnv.SUPABASE_URL) || 'https://placeholder.supabase.co';
 
 const supabaseUrl = rawSupabaseUrl.trim().replace(/\/+$/, '').replace(/\/rest\/v1\/?$/, '');
 
 const supabaseAnonKey = (
   (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY && !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY.includes('placeholder')
     ? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-    : rootEnv.SUPABASE_PUBLISHABLE_KEY || rootEnv.SUPABASE_SECRET_KEY) || 'placeholder-anon'
+    : process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_SECRET_KEY || rootEnv.SUPABASE_PUBLISHABLE_KEY || rootEnv.SUPABASE_SECRET_KEY) || 'placeholder-anon'
 ).trim();
 
 const supabaseServiceRoleKey = (
   process.env.SUPABASE_SERVICE_ROLE_KEY && !process.env.SUPABASE_SERVICE_ROLE_KEY.includes('placeholder')
     ? process.env.SUPABASE_SERVICE_ROLE_KEY
-    : rootEnv.SUPABASE_SECRET_KEY
+    : process.env.SUPABASE_SECRET_KEY || rootEnv.SUPABASE_SECRET_KEY
 )?.trim();
 
 // Cliente público para el frontend y consultas autorizadas con RLS
