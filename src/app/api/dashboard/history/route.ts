@@ -24,12 +24,14 @@ export async function GET(req: NextRequest) {
     else if (range === '12h') hours = 12;
     else if (range === '24h') hours = 24;
     else if (range === '7d') hours = 24 * 7;
+    else if (range === '30d') hours = 24 * 30;
+    else if (range === 'all') hours = 24 * 90;
     else if (startDateParam && endDateParam) {
       const diffMs = new Date(endDateParam).getTime() - new Date(startDateParam).getTime();
       hours = Math.max(0.1, diffMs / (1000 * 60 * 60));
     }
 
-    const isMultiDay = hours > 24 || range === '7d';
+    const isMultiDay = hours > 24 || range === '7d' || range === '30d' || range === 'all';
     const isSubHour = hours <= 1 || range === '1h';
     const formatLabel = (date: Date) => (isMultiDay ? formatPeruDateTime(date) : formatPeruTime(date, isSubHour));
 
@@ -56,28 +58,84 @@ export async function GET(req: NextRequest) {
       until = new Date(endDateParam).toISOString();
     }
 
-    // Consultar lecturas de sensor (orden descendente para garantizar puntos recientes si supera el límite)
-    const { data: rawSensorData, error: sensorErr } = await supabaseAdmin
-      .from('sensor_readings')
-      .select('*')
-      .gte('recorded_at', since)
-      .lte('recorded_at', until)
-      .order('recorded_at', { ascending: false })
-      .limit(1000);
+    // Consultar lecturas de sensor
+    // Si el rango abarca varios días, paginar hasta 8,000 filas y sub-muestrear para abarcar todo el período
+    let allSensorRows: any[] = [];
+    let sensorErr: any = null;
 
-    const sensorData = rawSensorData ? [...rawSensorData].reverse() : null;
+    if (hours > 24) {
+      for (let batch = 0; batch < 8; batch++) {
+        const fromIdx = batch * 1000;
+        const toIdx = fromIdx + 999;
+        const { data: batchData, error } = await supabaseAdmin
+          .from('sensor_readings')
+          .select('*')
+          .gte('recorded_at', since)
+          .lte('recorded_at', until)
+          .order('recorded_at', { ascending: false })
+          .range(fromIdx, toIdx);
+        if (error) { sensorErr = error; break; }
+        if (!batchData || batchData.length === 0) break;
+        allSensorRows.push(...batchData);
+        if (batchData.length < 1000) break;
+      }
+      if (allSensorRows.length > 800) {
+        const step = Math.ceil(allSensorRows.length / 800);
+        allSensorRows = allSensorRows.filter((_, idx) => idx % step === 0);
+      }
+    } else {
+      const { data: singleBatch, error } = await supabaseAdmin
+        .from('sensor_readings')
+        .select('*')
+        .gte('recorded_at', since)
+        .lte('recorded_at', until)
+        .order('recorded_at', { ascending: false })
+        .limit(1000);
+      sensorErr = error;
+      if (singleBatch) allSensorRows = singleBatch;
+    }
 
-    // Consultar telemetría de Aireador ODrive S1 (orden descendente para garantizar puntos recientes)
-    const { data: rawMotorData, error: motorErr } = await supabaseAdmin
-      .from('motor_telemetry')
-      .select('*')
-      .eq('device_id', 'b0000000-0000-0000-0000-000000000002')
-      .gte('recorded_at', since)
-      .lte('recorded_at', until)
-      .order('recorded_at', { ascending: false })
-      .limit(300);
+    const sensorData = allSensorRows.length ? allSensorRows.reverse() : null;
 
-    const motorData = rawMotorData ? [...rawMotorData].reverse() : null;
+    // Consultar telemetría de Aireador ODrive S1
+    let allMotorRows: any[] = [];
+    let motorErr: any = null;
+
+    if (hours > 24) {
+      for (let batch = 0; batch < 6; batch++) {
+        const fromIdx = batch * 1000;
+        const toIdx = fromIdx + 999;
+        const { data: bMotor, error } = await supabaseAdmin
+          .from('motor_telemetry')
+          .select('*')
+          .eq('device_id', 'b0000000-0000-0000-0000-000000000002')
+          .gte('recorded_at', since)
+          .lte('recorded_at', until)
+          .order('recorded_at', { ascending: false })
+          .range(fromIdx, toIdx);
+        if (error) { motorErr = error; break; }
+        if (!bMotor || bMotor.length === 0) break;
+        allMotorRows.push(...bMotor);
+        if (bMotor.length < 1000) break;
+      }
+      if (allMotorRows.length > 600) {
+        const step = Math.ceil(allMotorRows.length / 600);
+        allMotorRows = allMotorRows.filter((_, idx) => idx % step === 0);
+      }
+    } else {
+      const { data: sMotor, error } = await supabaseAdmin
+        .from('motor_telemetry')
+        .select('*')
+        .eq('device_id', 'b0000000-0000-0000-0000-000000000002')
+        .gte('recorded_at', since)
+        .lte('recorded_at', until)
+        .order('recorded_at', { ascending: false })
+        .limit(300);
+      motorErr = error;
+      if (sMotor) allMotorRows = sMotor;
+    }
+
+    const motorData = allMotorRows.length ? allMotorRows.reverse() : null;
 
     if (sensorErr || motorErr) {
       console.error('Error consultando historial:', sensorErr || motorErr);

@@ -164,25 +164,16 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
 
   const ranges = [
     { label: '1 Hora', value: '1h' },
-    { label: '6 Horas', value: '6h' },
     { label: '24 Horas', value: '24h' },
     { label: '7 Días', value: '7d' },
-    { label: 'Personalizado', value: 'custom' }
+    { label: '30 Días', value: '30d' },
+    { label: 'Todo', value: 'all' }
   ];
 
   // Manejo de cambio de rango y selector personalizado
   const handleRangeButtonClick = (rangeVal: string) => {
-    if (rangeVal === 'custom') {
-      setShowCustomPicker(prev => !prev);
-      if (selectedRange !== 'custom') {
-        const startIso = new Date(customStart).toISOString();
-        const endIso = new Date(customEnd).toISOString();
-        onRangeChange('custom', { start: startIso, end: endIso });
-      }
-    } else {
-      setShowCustomPicker(false);
-      onRangeChange(rangeVal);
-    }
+    setShowCustomPicker(false);
+    onRangeChange(rangeVal);
   };
 
   const handleApplyCustomRange = () => {
@@ -345,16 +336,26 @@ export const ChartsSection: React.FC<ChartsSectionProps> = ({
                 key={r.value}
                 onClick={() => handleRangeButtonClick(r.value)}
                 disabled={isLoading}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${
                   selectedRange === r.value
                     ? 'bg-slate-700 text-cyan-300 font-semibold shadow-inner'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                {r.value === 'custom' && <Calendar className="w-3 h-3 text-cyan-400" />}
-                <span>{r.label}</span>
+                {r.label}
               </button>
             ))}
+            <button
+              onClick={() => setShowCustomPicker(prev => !prev)}
+              className={`p-1.5 rounded-lg text-xs font-medium transition-all ${
+                showCustomPicker || selectedRange === 'custom'
+                  ? 'bg-cyan-950 text-cyan-300 border border-cyan-800'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title="Personalizar fecha exacta (opcional)"
+            >
+              <Calendar className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
       </div>

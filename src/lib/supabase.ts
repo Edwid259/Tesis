@@ -1,10 +1,44 @@
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
 
-const rawSupabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
+import fs from 'fs';
+import path from 'path';
+
+function getRootEnv(): Record<string, string> {
+  const map: Record<string, string> = {};
+  try {
+    const rootEnv = path.join(process.cwd(), '..', '.env');
+    if (fs.existsSync(rootEnv)) {
+      const content = fs.readFileSync(rootEnv, 'utf8');
+      for (const line of content.split(/\r?\n/)) {
+        const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+        if (m) map[m[1]] = m[2].replace(/^["']|["']$/g, '').trim();
+      }
+    }
+  } catch {}
+  return map;
+}
+
+const rootEnv = getRootEnv();
+
+const rawSupabaseUrl =
+  (process.env.NEXT_PUBLIC_SUPABASE_URL && !process.env.NEXT_PUBLIC_SUPABASE_URL.includes('placeholder')
+    ? process.env.NEXT_PUBLIC_SUPABASE_URL
+    : rootEnv.SUPABASE_URL) || 'https://placeholder.supabase.co';
+
 const supabaseUrl = rawSupabaseUrl.trim().replace(/\/+$/, '').replace(/\/rest\/v1\/?$/, '');
-const supabaseAnonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-anon').trim();
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY ? process.env.SUPABASE_SERVICE_ROLE_KEY.trim() : undefined;
+
+const supabaseAnonKey = (
+  (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY && !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY.includes('placeholder')
+    ? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    : rootEnv.SUPABASE_PUBLISHABLE_KEY || rootEnv.SUPABASE_SECRET_KEY) || 'placeholder-anon'
+).trim();
+
+const supabaseServiceRoleKey = (
+  process.env.SUPABASE_SERVICE_ROLE_KEY && !process.env.SUPABASE_SERVICE_ROLE_KEY.includes('placeholder')
+    ? process.env.SUPABASE_SERVICE_ROLE_KEY
+    : rootEnv.SUPABASE_SECRET_KEY
+)?.trim();
 
 // Cliente público para el frontend y consultas autorizadas con RLS
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
@@ -33,9 +67,9 @@ export function hashApiKey(key: string): string {
  */
 export function isSupabaseConfigured(): boolean {
   return Boolean(
-    process.env.NEXT_PUBLIC_SUPABASE_URL &&
-    !process.env.NEXT_PUBLIC_SUPABASE_URL.includes('placeholder') &&
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY &&
-    !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY.includes('placeholder')
+    supabaseUrl &&
+    !supabaseUrl.includes('placeholder') &&
+    supabaseAnonKey &&
+    !supabaseAnonKey.includes('placeholder')
   );
 }
